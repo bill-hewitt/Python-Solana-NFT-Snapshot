@@ -91,7 +91,7 @@ if wallet == True:
     
     
     
-    Dataset = pd.DataFrame(tokendata, columns=['Token','Holderaddress', 'Mintaddress', 'totalHolders'])         #create Dataframe with coumns
+    Dataset = pd.DataFrame(tokendata, columns=['Token','Holderaddress', 'Mintaddress', 'total Holders'])         #create Dataframe with coumns
     Dataset.to_csv("Snapshot.csv")                                                                              #save Dataframe to csv.
 
 
