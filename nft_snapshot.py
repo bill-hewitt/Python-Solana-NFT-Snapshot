@@ -51,8 +51,8 @@ MARKETPLACE_WALLETS = {
 }
 
 
-def main(candymachine_id, cmv2, sig_file_name, outfile_name, token_file_name):
-    get_token_list = False
+def main(candymachine_id, cmv2, outfile_name, token_file_name):
+    get_token_list = True
     get_holder_counts = True
     get_attribute_distribution = True
     get_holder_snapshot = True
@@ -63,16 +63,15 @@ def main(candymachine_id, cmv2, sig_file_name, outfile_name, token_file_name):
     if get_token_list:
         if candymachine_id:
             token_list = get_token_list_from_candymachine_id(candymachine_id, cmv2)
-        elif sig_file_name:
-            token_list = get_token_list_from_signatures(sig_file_name)
         else:
-            print("ERROR: You asked for the token list but didn't give signature list or CM ID to look up by")
+            print("ERROR: You asked for the token list but didn't give CM ID to look up by")
             exit(1)
 
+        # Write the token file (note that this will blow away whatever is there now)
         with open(token_file_name, 'w') as token_list_file:
             token_list_file.write("\n".join(token_list))
 
-    # If we're looking up based on an existing token list...
+    # If we're looking up based on an existing token list from disk, read it in
     if not token_list:
         with open(token_file_name) as token_list_file:
             token_list = token_list_file.read().splitlines()
@@ -344,49 +343,6 @@ def holder_snapshot(all_token_data, outfile_name):
     dataset.to_csv(outfile_name)
 
 
-# #### HERE BEGINS THE LAND OF JANK
-
-
-def get_token_list_from_signatures(sig_file_name):
-    signature_list = open(sig_file_name)  # load list
-    signature_list = signature_list.read().splitlines()
-
-    token_list = []
-    transaction_data = None
-    for signature in tqdm.tqdm(signature_list):  # check all transactions/signatures
-        try:
-            logger.debug('Signature: %s', signature)
-            transaction_data = make_solscan_request('transaction/' + signature)
-            token_address = transaction_data.get('tokenBalances')[0].get('token').get('tokenAddress')
-            logger.debug('Token: %s', token_address)
-
-            if token_address not in token_list:  # if new token
-                token_list.append(token_address)  # add to list
-
-        except Exception as e:
-            if transaction_data and not transaction_data.get('tokenBalances'):
-                logger.warning('No Token in Transaction: %s', transaction_data)
-            else:
-                logger.warning(e)
-    return token_list
-
-
-def make_solscan_request(endpoint):
-    # sleep(0.7)  #prevent to many requests: 30 seconds/50 requests -> 0.6 -> 0.05 safety
-    url = 'https://public-api.solscan.io/' + endpoint
-    response = requests.get(url)
-    # TODO: properly handle request errors (https://public-api.solscan.io/docs/#/Account/get_account__account_)
-    if 429 == response.status_code:  # Too Many Request. Try again after 1 minute + 20 sec
-        while 429 == response.status_code:
-            logger.debug('Too many requests, sleeping then retrying')
-            sleep(5)
-            response = requests.get(url)
-    return response.json()
-
-
-# #### THUS ENDS THE LAND OF JANK
-
-
 def load_request_cache(cache_file_key):
     filename = "{}_cache.json".format(cache_file_key)
     try:
@@ -444,8 +400,6 @@ def sort_dict_by_values(dictionary, reverse=False):
 
 if __name__ == "__main__":
     parser = OptionParser()
-    parser.add_option("--sigfile", dest="sigfile_name",
-                      help="read in signatures from FILE", metavar="FILE")
     parser.add_option("-f", "--file", dest="outfile_name", default="snapshot.csv",
                       help="write report to FILE", metavar="FILE")
     parser.add_option("--cmid", dest="candymachine_id",
@@ -466,7 +420,6 @@ if __name__ == "__main__":
     main(
         options.candymachine_id,
         options.cm_v2,
-        options.sigfile_name,
         options.outfile_name,
         tokenfile_name
     )
