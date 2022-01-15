@@ -1,5 +1,9 @@
 """
-
+Script to fetch data about an NFT mint on the Solana network. Capabilities include:
+- Fetching mint token list from a CandyMachine ID
+- Printing an ordered list of how many NFTs each wallet is holding
+- Printing a rarity assessment of the different traits from metadata
+- Outputting a CSV snapshotting token info and current holders
 """
 
 import aiohttp
@@ -10,11 +14,9 @@ import json
 import logging
 import requests
 import pandas as pd
-import threading
 import time
 import tqdm
 from aiolimiter import AsyncLimiter
-from functools import wraps
 from optparse import OptionParser
 from pathlib import Path
 from solana.rpc.api import Client
@@ -22,6 +24,8 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.types import DataSliceOpts, MemcmpOpts
 from solana.publickey import PublicKey
 from time import sleep
+
+from utils import metadata
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
@@ -151,12 +155,142 @@ def get_token_list_from_candymachine_id(cm_id, use_v2):
             for v in metadata_accounts["result"]]
 
 
+def populate_holders_details_async(all_token_data, cache_file_key):
+    start_time = time.time()
+
+    logging.info("\nPopulating holders details...")
+
+    async def inner(token_data):
+        limiter = AsyncLimiter(100, 1)
+        async with AsyncClient(SOLANA_RPC_ENDPOINT, timeout=60) as client:
+            tasks = []
+            for token in token_data.keys():
+                if token_data[token].get('holders') is None:
+                    tasks.append(asyncio.create_task(
+                        get_holder_info_from_solana_async(client, token_data[token], limiter)
+                    ))
+            [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
+        save_request_cache(cache_file_key, token_data)
+        return token_data
+
+    result = asyncio.run(inner(all_token_data))
+    save_request_cache(cache_file_key, all_token_data)
+
+    logging.info("--- %s seconds ---", (time.time() - start_time))
+    return result
+
+
+async def get_holder_info_from_solana_async(client, data_dict, limiter):
+    async with limiter:
+        largest_account = await client.get_token_largest_accounts(data_dict['token'])
+        account_info = await client.get_account_info(
+            largest_account['result']['value'][0]['address'],
+            encoding="jsonParsed"
+        )
+    data_dict['holders'] = account_info["result"]["value"]['data']['parsed']
+    return data_dict
+
+
+def populate_account_details_async(all_token_data, cache_file_key):
+    async def inner(token_data):
+        limiter = AsyncLimiter(100, 1)
+        async with AsyncClient(SOLANA_RPC_ENDPOINT, timeout=60) as sol_client:
+            tasks = []
+            for token in token_data.keys():
+                if token_data[token].get('account') is None:
+                    tasks.append(asyncio.create_task(
+                        get_account_info_from_solana_async(
+                            sol_client,
+                            token_data[token],
+                            limiter
+                        )
+                    ))
+            [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
+
+        save_request_cache(cache_file_key, token_data)
+        return token_data
+
+    async def inner2(token_data):
+        limiter = AsyncLimiter(100, 1)
+        conn = aiohttp.TCPConnector(limit=100)
+        async with aiohttp.ClientSession(connector=conn) as http_client:
+            tasks = []
+            for token in token_data.keys():
+                if token_data[token].get('arweave') is None:
+                    tasks.append(asyncio.create_task(
+                        get_arweave_metadata(
+                            http_client,
+                            token_data[token],
+                            limiter
+                        )
+                    ))
+            [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
+
+        save_request_cache(cache_file_key, token_data)
+        return token_data
+
+    start_time = time.time()
+    logging.info("\nPopulating account details...")
+    asyncio.run(inner(all_token_data))
+    logging.info("--- %s seconds ---", (time.time() - start_time))
+
+    start_time = time.time()
+    logging.info("\nPopulating token metadata details...")
+    result = asyncio.run(inner2(all_token_data))
+    save_request_cache(cache_file_key, all_token_data)
+    logging.info("--- %s seconds ---", (time.time() - start_time))
+
+    return result
+
+
+async def get_account_info_from_solana_async(sol_client, data_dict, limiter):
+    async with limiter:
+        metadata_account = metadata.get_metadata_account(data_dict['token'])
+        data = await sol_client.get_account_info(metadata_account)
+        decoded_data = base64.b64decode(data['result']['value']['data'][0])
+    unpacked_data = metadata.unpack_metadata_account(decoded_data)
+
+    # This unfortunately leaves us with bytes, which are note JSON-serializable for caching...
+    for k, v in unpacked_data.items():
+        try:
+            unpacked_data[k] = v.decode()
+        except (UnicodeDecodeError, AttributeError):
+            pass
+    data_dict['account'] = unpacked_data
+
+
+async def get_arweave_metadata(http_client, data_dict, limiter):
+    arweave_uri = data_dict['account']["data"].get("uri")
+    if data_dict.get('arweave') is None:
+        data_dict['arweave'] = {}
+    if arweave_uri:
+        async with limiter:
+            data_dict['arweave'] = await async_http_request(http_client, arweave_uri)
+
+
+async def async_http_request(session, url):
+    async with session.get(url) as resp:
+        if resp.status != 200:
+            if resp.status == 429:
+                # If we failed for some reason, try again
+                logger.debug(f'Got status code %s for url %s, sleeping and retrying', resp.status, url)
+                sleep(3)
+                return await async_http_request(session, url)
+            else:
+                logger.error("HTTP request for %s failed with status %s: %s",
+                             url, resp.status, resp.json())
+        logging.debug('Successful response for url %s', url)
+        body = await resp.json()
+        return body
+
+
 def holder_counts(all_token_data):
     counts = {}
     for token, data_dict in all_token_data.items():
         token_holders = data_dict['holders']
         # Why is this empty sometimes? :shrug:
-        holder_address = token_holders.get('data')[0].get('owner') or "UNKNOWN_ADDRESS"
+        # holder_address = token_holders.get('data')[0].get('owner') or "UNKNOWN_ADDRESS"
+        holder_address = token_holders.get('info').get('owner') or "UNKNOWN_ADDRESS"
 
         if not counts.get(holder_address):
             counts[holder_address] = 0
@@ -170,8 +304,8 @@ def attribute_distribution(all_token_data):
     attribute_counts = {}
 
     for token, data_dict in all_token_data.items():
-        account_data = data_dict['account']
-        attributes = account_data.get('metadata').get('data').get('attributes')
+        arweave_data = data_dict['arweave']
+        attributes = arweave_data.get('attributes')
         if attributes:
             tokens_with_attributes_total += 1
             for attribute in attributes:
@@ -183,7 +317,7 @@ def attribute_distribution(all_token_data):
                     attribute_counts[trait_type][value] = 0
                 attribute_counts[trait_type][value] += 1
         else:
-            logging.warning("Token %s has no attributes", token)
+            logging.info("Token %s has no attributes", token)
 
     print_trait_frequency(tokens_with_attributes_total, attribute_counts)
 
@@ -195,91 +329,19 @@ def holder_snapshot(all_token_data, outfile_name):
         token_holders = data_dict['holders']
         account_data = data_dict['account']
 
-        holder_address = token_holders.get('data')[0].get('owner')
-        token_name = account_data.get('tokenInfo').get('name')
+        # holder_address = token_holders.get('data')[0].get('owner')
+        holder_address = token_holders.get('info').get('owner') or "UNKNOWN_ADDRESS"
+        token_name = account_data.get('data').get('name')
         token_csv_data.append([
             token_name[token_name.find('#') + 1::],
             token_name,
             token,
             holder_address,
-            token_holders.get('data')[-1].get('owner'),  # mint address
-            token_holders.get('total')  # total holders of this token
+            token_holders.get('info').get('tokenAmount').get('amount')
         ])
 
-    dataset = pd.DataFrame(token_csv_data, columns=['Number', 'TokenName', 'Token', 'HolderAddress', 'MintAddress', 'TotalHolders'])
+    dataset = pd.DataFrame(token_csv_data, columns=['Number', 'TokenName', 'Token', 'HolderAddress', 'TotalHeld'])
     dataset.to_csv(outfile_name)
-
-
-def populate_holders_details_async(all_token_data, cache_file_key):
-    start_time = time.time()
-
-    logging.info("\nPopulating holders details...")
-    result = asyncio.run(populate_data_dict_async(
-        all_token_data,
-        "holders",
-        lambda token: f'token/holders?tokenAddress={token}&offset=0&limit=20',
-        cache_file_key,
-    ))
-    logging.info("--- %s seconds ---", (time.time() - start_time))
-    return result
-
-
-def get_holder_info_from_solana(token):
-    # TODO: Use this! Likely significant speedup
-    async with AsyncClient(SOLANA_RPC_ENDPOINT) as client:
-        la = await client.get_token_largest_accounts(PublicKey(token))
-        lai = await client.get_account_info(la['result']['value'][0]['address'], encoding="jsonParsed")
-        result = lai["result"]["value"]['data']['parsed']['info']['owner']
-
-
-def populate_account_details_async(all_token_data, cache_file_key):
-    start_time = time.time()
-
-    logging.info("\nPopulating account details...")
-    result = asyncio.run(populate_data_dict_async(
-        all_token_data,
-        "account",
-        lambda token: f'account/{token}',
-        cache_file_key,
-    ))
-    logging.info("--- %s seconds ---", (time.time() - start_time))
-    return result
-
-
-async def populate_data_dict_async(all_token_data, key, endpoint_fn, cache_file_key):
-    conn = aiohttp.TCPConnector(limit=10)
-    async with aiohttp.ClientSession(connector=conn) as session:
-        limiter = AsyncLimiter(145, 30)
-
-        tasks = []
-        for token in all_token_data.keys():
-            if all_token_data[token].get(key) is None:
-                tasks.append(asyncio.create_task(
-                    get_token_data(session, limiter, all_token_data[token], key, endpoint_fn(token))
-                ))
-        [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
-
-    save_request_cache(cache_file_key, all_token_data)
-    return all_token_data
-
-
-async def get_token_data(session, limiter, data_dict, key, endpoint):
-    async with limiter:
-        site = 'https://public-api.solscan.io/'
-        data_dict[key] = await async_solscan_request(session, f'{site}{endpoint}')
-        return data_dict
-
-
-async def async_solscan_request(session, url):
-    async with session.get(url) as resp:
-        if resp.status != 200:
-            # If we failed for some reason, try again
-            logging.debug(f'Got status code %s for url %s, sleeping and retrying', resp.status, url)
-            sleep(3)
-            return await async_solscan_request(session, url)
-        logging.debug('Successful response for url %s', url)
-        body = await resp.json()
-        return body
 
 
 # #### HERE BEGINS THE LAND OF JANK
@@ -390,11 +452,6 @@ if __name__ == "__main__":
                       help="Use Candy Machine ID to fetch tokens")
     parser.add_option("--cmv2", dest="cm_v2", action="store_true", default=False,
                       help="Use Candy Machine v2 method to fetch tokens from CM ID")
-
-    # TODO: implement these...
-    parser.add_option("-q", "--quiet",
-                  action="store_true", dest="verbose", default=False,
-                  help="don't print status messages to stdout")
 
     (options, args) = parser.parse_args()
     # 4wTTi885HkQ6awqRGQkHAdXXzE46DyqLNXtfo1uz5ub3 = Mindfolk
