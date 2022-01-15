@@ -6,24 +6,24 @@ Script to fetch data about an NFT mint on the Solana network. Capabilities inclu
 - Outputting a CSV snapshotting token info and current holders
 """
 
-import aiohttp
-import asyncio
-import base58
 import base64
 import json
 import logging
-import requests
-import pandas as pd
 import time
-import tqdm
-from aiolimiter import AsyncLimiter
 from optparse import OptionParser
 from pathlib import Path
+from time import sleep
+
+import aiohttp
+import asyncio
+import base58
+import pandas as pd
+import tqdm
+from aiolimiter import AsyncLimiter
 from solana.rpc.api import Client
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.types import DataSliceOpts, MemcmpOpts
 from solana.publickey import PublicKey
-from time import sleep
 
 from utils import metadata
 

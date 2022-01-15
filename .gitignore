@@ -1,2 +1,5 @@
 venv
 cache
+app.log
+snapshot.csv
+tokenlist*.txt
