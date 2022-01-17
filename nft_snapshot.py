@@ -5,7 +5,7 @@ Script to fetch data about an NFT mint on the Solana network. Capabilities inclu
 - Printing a rarity assessment of the different traits from metadata
 - Outputting a CSV snapshotting token info and current holders
 """
-
+import asyncio
 import base64
 import json
 import logging
@@ -15,27 +15,30 @@ from pathlib import Path
 from time import sleep
 
 import aiohttp
-import asyncio
 import base58
 import pandas as pd
 import tqdm
 from aiolimiter import AsyncLimiter
+from retry import retry
+from solana.publickey import PublicKey
 from solana.rpc.api import Client
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.types import DataSliceOpts, MemcmpOpts
-from solana.publickey import PublicKey
+from solana.rpc.types import DataSliceOpts
+from solana.rpc.types import MemcmpOpts
 
 from utils import metadata
 
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
-                    filename='app.log')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
+    filename="app.log",
+)
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
-ch.setFormatter(logging.Formatter('%(message)s'))
-logging.getLogger('').addHandler(ch)
+ch.setFormatter(logging.Formatter("%(message)s"))
+logging.getLogger("").addHandler(ch)
 
-logger = logging.getLogger('nft_snapshot')
+logger = logging.getLogger("nft_snapshot")
 
 request_cache = None
 CACHE_DIR = "cache"
@@ -51,12 +54,16 @@ MARKETPLACE_WALLETS = {
 }
 
 
-def main(candymachine_id, cmv2, outfile_name, token_file_name):
-    get_token_list = True
-    get_holder_counts = True
-    get_attribute_distribution = True
-    get_holder_snapshot = True
-
+def main(
+    get_token_list: bool,
+    get_holder_counts: bool,
+    get_attribute_distribution: bool,
+    get_holder_snapshot: bool,
+    candymachine_id: str,
+    cmv2: bool,
+    outfile_name: str,
+    token_file_name: str,
+) -> None:
     cache_file_key = token_file_name
     token_list = []
 
@@ -68,7 +75,7 @@ def main(candymachine_id, cmv2, outfile_name, token_file_name):
             exit(1)
 
         # Write the token file (note that this will blow away whatever is there now)
-        with open(token_file_name, 'w') as token_list_file:
+        with open(token_file_name, "w") as token_list_file:
             token_list_file.write("\n".join(token_list))
 
     # If we're looking up based on an existing token list from disk, read it in
@@ -107,7 +114,7 @@ def main(candymachine_id, cmv2, outfile_name, token_file_name):
         holder_snapshot(all_token_data, outfile_name)
 
 
-def get_token_list_from_candymachine_id(cm_id, use_v2):
+def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool) -> list:
     """
     Adapted from https://github.com/solana-dev-adv/solana-cookbook/tree/master/code/nfts/nfts-mint-addresses
 
@@ -117,7 +124,7 @@ def get_token_list_from_candymachine_id(cm_id, use_v2):
     """
     start_time = time.time()
 
-    logger.info(f'Fetching tokens from CM {cm_id} (v2? {use_v2})')
+    logger.info(f"Fetching tokens from CM {cm_id} (v2? {use_v2})")
 
     client = Client(SOLANA_RPC_ENDPOINT, timeout=120)
 
@@ -127,16 +134,31 @@ def get_token_list_from_candymachine_id(cm_id, use_v2):
     MAX_SYMBOL_LENGTH = 10
     MAX_CREATOR_LEN = 32 + 1 + 1
     MAX_CREATOR_LIMIT = 5
-    MAX_DATA_SIZE = 4 + MAX_NAME_LENGTH + 4 + MAX_SYMBOL_LENGTH + 4 + MAX_URI_LENGTH + 2 + 1 + 4 + MAX_CREATOR_LIMIT * MAX_CREATOR_LEN
+    MAX_DATA_SIZE = (
+        4
+        + MAX_NAME_LENGTH
+        + 4
+        + MAX_SYMBOL_LENGTH
+        + 4
+        + MAX_URI_LENGTH
+        + 2
+        + 1
+        + 4
+        + MAX_CREATOR_LIMIT * MAX_CREATOR_LEN
+    )
     MAX_METADATA_LEN = 1 + 32 + 32 + MAX_DATA_SIZE + 1 + 1 + 9 + 172
-    CREATOR_ARRAY_START = 1 + 32 + 32 + 4 + MAX_NAME_LENGTH + 4 + MAX_URI_LENGTH + 4 + MAX_SYMBOL_LENGTH + 2 + 1 + 4
+    CREATOR_ARRAY_START = (
+        1 + 32 + 32 + 4 + MAX_NAME_LENGTH + 4 + MAX_URI_LENGTH + 4 + MAX_SYMBOL_LENGTH + 2 + 1 + 4
+    )
 
-    TOKEN_METADATA_PROGRAM = PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s')
-    CANDY_MACHINE_V2_PROGRAM = PublicKey('cndy3Z4yapfJBmL3ShUp5exZKqR3z33thTzeNMm2gRZ')
+    TOKEN_METADATA_PROGRAM = PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s")
+    CANDY_MACHINE_V2_PROGRAM = PublicKey("cndy3Z4yapfJBmL3ShUp5exZKqR3z33thTzeNMm2gRZ")
 
     cm_pk = PublicKey(cm_id)
     if use_v2:
-        cm_pk = cm_pk.find_program_address([b'candy_machine', bytes(cm_pk)], CANDY_MACHINE_V2_PROGRAM)[0]
+        cm_pk = cm_pk.find_program_address(
+            [b"candy_machine", bytes(cm_pk)], CANDY_MACHINE_V2_PROGRAM
+        )[0]
 
     # Set some options for exactly where to look within the data, and then fetch it
     memcmp_opts = [MemcmpOpts(offset=CREATOR_ARRAY_START, bytes=str(cm_pk))]
@@ -150,11 +172,13 @@ def get_token_list_from_candymachine_id(cm_id, use_v2):
     )
     logging.info("--- %s seconds ---", (time.time() - start_time))
 
-    return [str(base58.b58encode(base64.b64decode(v['account']['data'][0])), 'UTF-8')
-            for v in metadata_accounts["result"]]
+    return [
+        str(base58.b58encode(base64.b64decode(v["account"]["data"][0])), "UTF-8")
+        for v in metadata_accounts["result"]
+    ]
 
 
-def populate_holders_details_async(all_token_data, cache_file_key):
+def populate_holders_details_async(all_token_data: dict, cache_file_key: str) -> dict:
     start_time = time.time()
 
     logging.info("\nPopulating holders details...")
@@ -164,10 +188,12 @@ def populate_holders_details_async(all_token_data, cache_file_key):
         async with AsyncClient(SOLANA_RPC_ENDPOINT, timeout=60) as client:
             tasks = []
             for token in token_data.keys():
-                if token_data[token].get('holders') is None:
-                    tasks.append(asyncio.create_task(
-                        get_holder_info_from_solana_async(client, token_data[token], limiter)
-                    ))
+                if token_data[token].get("holders") is None:
+                    tasks.append(
+                        asyncio.create_task(
+                            get_holder_info_from_solana_async(client, token_data[token], limiter)
+                        )
+                    )
             [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
         save_request_cache(cache_file_key, token_data)
         return token_data
@@ -179,50 +205,57 @@ def populate_holders_details_async(all_token_data, cache_file_key):
     return result
 
 
-async def get_holder_info_from_solana_async(client, data_dict, limiter):
+@retry(exceptions=Exception, tries=3)
+async def get_holder_info_from_solana_async(
+    client: AsyncClient, data_dict: dict, limiter: AsyncLimiter
+) -> dict:
     async with limiter:
-        largest_account = await client.get_token_largest_accounts(data_dict['token'])
-        account_info = await client.get_account_info(
-            largest_account['result']['value'][0]['address'],
-            encoding="jsonParsed"
-        )
-    data_dict['holders'] = account_info["result"]["value"]['data']['parsed']
-    return data_dict
+        largest_account = await client.get_token_largest_accounts(data_dict["token"])
+        if largest_account["result"]["value"]:
+            account_info = await client.get_account_info(
+                largest_account["result"]["value"][0]["address"], encoding="jsonParsed"
+            )
+            data_dict["holders"] = account_info["result"]["value"]["data"]["parsed"]
+            return data_dict
+        else:
+            logger.warning(
+                "No holder info for {}. Response: {}".format(data_dict["token"], largest_account)
+            )
+            data_dict["holders"] = {}
+            return data_dict
 
 
-def populate_account_details_async(all_token_data, cache_file_key):
-    async def inner(token_data):
+def populate_account_details_async(all_token_data: dict, cache_file_key: str) -> dict:
+    async def inner(token_data: dict) -> dict:
         limiter = AsyncLimiter(100, 1)
         async with AsyncClient(SOLANA_RPC_ENDPOINT, timeout=60) as sol_client:
             tasks = []
             for token in token_data.keys():
-                if token_data[token].get('account') is None:
-                    tasks.append(asyncio.create_task(
-                        get_account_info_from_solana_async(
-                            sol_client,
-                            token_data[token],
-                            limiter
+                if token_data[token].get("account") is None:
+                    tasks.append(
+                        asyncio.create_task(
+                            get_account_info_from_solana_async(
+                                sol_client, token_data[token], limiter
+                            )
                         )
-                    ))
+                    )
             [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
 
         save_request_cache(cache_file_key, token_data)
         return token_data
 
-    async def inner2(token_data):
+    async def inner2(token_data: dict) -> dict:
         limiter = AsyncLimiter(100, 1)
-        conn = aiohttp.TCPConnector(limit=100)
+        conn = aiohttp.TCPConnector(limit=75)
         async with aiohttp.ClientSession(connector=conn) as http_client:
             tasks = []
             for token in token_data.keys():
-                if token_data[token].get('arweave') is None:
-                    tasks.append(asyncio.create_task(
-                        get_arweave_metadata(
-                            http_client,
-                            token_data[token],
-                            limiter
+                if token_data[token].get("arweave") is None:
+                    tasks.append(
+                        asyncio.create_task(
+                            get_arweave_metadata(http_client, token_data[token], limiter)
                         )
-                    ))
+                    )
             [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
 
         save_request_cache(cache_file_key, token_data)
@@ -242,11 +275,14 @@ def populate_account_details_async(all_token_data, cache_file_key):
     return result
 
 
-async def get_account_info_from_solana_async(sol_client, data_dict, limiter):
+@retry(exceptions=Exception, tries=3)
+async def get_account_info_from_solana_async(
+    sol_client: AsyncClient, data_dict: dict, limiter: AsyncLimiter
+):
     async with limiter:
-        metadata_account = metadata.get_metadata_account(data_dict['token'])
+        metadata_account = metadata.get_metadata_account(data_dict["token"])
         data = await sol_client.get_account_info(metadata_account)
-        decoded_data = base64.b64decode(data['result']['value']['data'][0])
+        decoded_data = base64.b64decode(data["result"]["value"]["data"][0])
     unpacked_data = metadata.unpack_metadata_account(decoded_data)
 
     # This unfortunately leaves us with bytes, which are note JSON-serializable for caching...
@@ -255,41 +291,50 @@ async def get_account_info_from_solana_async(sol_client, data_dict, limiter):
             unpacked_data[k] = v.decode()
         except (UnicodeDecodeError, AttributeError):
             pass
-    data_dict['account'] = unpacked_data
+    data_dict["account"] = unpacked_data
 
 
-async def get_arweave_metadata(http_client, data_dict, limiter):
-    arweave_uri = data_dict['account']["data"].get("uri")
-    if data_dict.get('arweave') is None:
-        data_dict['arweave'] = {}
+async def get_arweave_metadata(
+    http_client: aiohttp.ClientSession, data_dict: dict, limiter: AsyncLimiter
+) -> dict:
+    arweave_uri = data_dict["account"]["data"].get("uri")
+    if data_dict.get("arweave") is None:
+        data_dict["arweave"] = {}
     if arweave_uri:
         async with limiter:
-            data_dict['arweave'] = await async_http_request(http_client, arweave_uri)
+            data_dict["arweave"] = await async_http_request(http_client, arweave_uri)
+    return data_dict
 
 
-async def async_http_request(session, url):
+@retry(exceptions=Exception, tries=3)
+async def async_http_request(session: aiohttp.ClientSession, url: str) -> dict:
     async with session.get(url) as resp:
         if resp.status != 200:
             if resp.status == 429:
                 # If we failed for some reason, try again
-                logger.debug(f'Got status code %s for url %s, sleeping and retrying', resp.status, url)
+                logger.debug(
+                    "Got status code %s for url %s, sleeping and retrying", resp.status, url
+                )
                 sleep(3)
-                return await async_http_request(session, url)
+                raise TimeoutError()
             else:
-                logger.error("HTTP request for %s failed with status %s: %s",
-                             url, resp.status, resp.json())
-        logging.debug('Successful response for url %s', url)
+                logger.error(
+                    "HTTP request for %s failed with status %s: %s", url, resp.status, resp.json()
+                )
+        logging.debug("Successful response for url %s", url)
         body = await resp.json()
-        return body
+    return body
 
 
-def holder_counts(all_token_data):
+def holder_counts(all_token_data: dict) -> None:
     counts = {}
     for token, data_dict in all_token_data.items():
-        token_holders = data_dict['holders']
-        # Why is this empty sometimes? :shrug:
-        # holder_address = token_holders.get('data')[0].get('owner') or "UNKNOWN_ADDRESS"
-        holder_address = token_holders.get('info').get('owner') or "UNKNOWN_ADDRESS"
+        token_holders = data_dict["holders"]
+        # Why is this empty sometimes? Because tokens get nuked, so there is no "holder" to fetch
+        if token_holders.get("info") and token_holders["info"].get("owner"):
+            holder_address = token_holders["info"]["owner"]
+        else:
+            holder_address = "UNKNOWN_ADDRESS"
 
         if not counts.get(holder_address):
             counts[holder_address] = 0
@@ -298,18 +343,18 @@ def holder_counts(all_token_data):
     print_biggest_holders(len(all_token_data), counts)
 
 
-def attribute_distribution(all_token_data):
+def attribute_distribution(all_token_data: dict) -> None:
     tokens_with_attributes_total = 0
     attribute_counts = {}
 
     for token, data_dict in all_token_data.items():
-        arweave_data = data_dict['arweave']
-        attributes = arweave_data.get('attributes')
+        arweave_data = data_dict["arweave"]
+        attributes = arweave_data.get("attributes")
         if attributes:
             tokens_with_attributes_total += 1
             for attribute in attributes:
-                trait_type = attribute['trait_type']
-                value = attribute['value'] if attribute['value'] is not None else ""
+                trait_type = attribute["trait_type"]
+                value = attribute["value"] if attribute["value"] is not None else ""
                 if not attribute_counts.get(trait_type):
                     attribute_counts[trait_type] = {}
                 if not attribute_counts[trait_type].get(value):
@@ -321,29 +366,37 @@ def attribute_distribution(all_token_data):
     print_trait_frequency(tokens_with_attributes_total, attribute_counts)
 
 
-def holder_snapshot(all_token_data, outfile_name):
+def holder_snapshot(all_token_data: dict, outfile_name: str) -> None:
     token_csv_data = []
 
     for token, data_dict in all_token_data.items():
-        token_holders = data_dict['holders']
-        account_data = data_dict['account']
+        token_holders = data_dict["holders"]
+        account_data = data_dict["account"]
 
-        # holder_address = token_holders.get('data')[0].get('owner')
-        holder_address = token_holders.get('info').get('owner') or "UNKNOWN_ADDRESS"
-        token_name = account_data.get('data').get('name')
-        token_csv_data.append([
-            token_name[token_name.find('#') + 1::],
-            token_name,
-            token,
-            holder_address,
-            token_holders.get('info').get('tokenAmount').get('amount')
-        ])
+        if token_holders.get("info"):
+            holder_address = token_holders["info"].get("owner")
+            amount = token_holders["info"].get("tokenAmount").get("amount")
+        else:
+            holder_address = "UNKNOWN_ADDRESS"
+            amount = 0
+        token_name = account_data.get("data").get("name")
+        token_csv_data.append(
+            [
+                token_name[token_name.find("#") + 1 : :],
+                token_name,
+                token,
+                holder_address,
+                amount,
+            ]
+        )
 
-    dataset = pd.DataFrame(token_csv_data, columns=['Number', 'TokenName', 'Token', 'HolderAddress', 'TotalHeld'])
+    dataset = pd.DataFrame(
+        token_csv_data, columns=["Number", "TokenName", "Token", "HolderAddress", "TotalHeld"]
+    )
     dataset.to_csv(outfile_name)
 
 
-def load_request_cache(cache_file_key):
+def load_request_cache(cache_file_key: str) -> dict:
     filename = "{}_cache.json".format(cache_file_key)
     try:
         path = Path(CACHE_DIR) / filename
@@ -356,7 +409,7 @@ def load_request_cache(cache_file_key):
         return {}
 
 
-def save_request_cache(cache_file_key, cache_data):
+def save_request_cache(cache_file_key: str, cache_data: dict) -> None:
     filename = "{}_cache.json".format(cache_file_key)
     try:
         path = Path(CACHE_DIR)
@@ -369,7 +422,7 @@ def save_request_cache(cache_file_key, cache_data):
         logger.warning("Unable to write cache file %s: %s", filename, e)
 
 
-def print_biggest_holders(tokens_total, counts):
+def print_biggest_holders(tokens_total: int, counts: dict) -> None:
     print("\n")
     print("Total tokens: {}".format(tokens_total))
 
@@ -377,22 +430,26 @@ def print_biggest_holders(tokens_total, counts):
     counts = sort_dict_by_values(counts, reverse=True)
     print("\nBiggest holders:\n----------")
     for holder, count in counts.items():
-        marketplace_suffix = " (" + MARKETPLACE_WALLETS[holder] + ")" if holder in MARKETPLACE_WALLETS else ""
+        marketplace_suffix = (
+            " (" + MARKETPLACE_WALLETS[holder] + ")" if holder in MARKETPLACE_WALLETS else ""
+        )
         print("{}: {}{}".format(holder, count, marketplace_suffix))
 
 
-def print_trait_frequency(tokens_with_metadata_total, attribute_counts):
+def print_trait_frequency(tokens_with_metadata_total: int, attribute_counts: dict) -> None:
     # Print out trait frequency
-    print(f'\n{tokens_with_metadata_total} tokens with metadata')
+    print(f"\n{tokens_with_metadata_total} tokens with metadata")
     print("\nAttributes:\n----------")
     for trait_type, values in attribute_counts.items():
         print("\n" + trait_type)
         for value, count in sort_dict_by_values(values).items():
-            frequency_str = " ({}/{}, {})".format(count, tokens_with_metadata_total, count * 1.0/tokens_with_metadata_total)
-            print(value + ": " + str(count) + frequency_str)
+            frequency_str = " ({}/{}, {})".format(
+                count, tokens_with_metadata_total, count * 1.0 / tokens_with_metadata_total
+            )
+            print(f"{value}: {count}{frequency_str}")
 
 
-def sort_dict_by_values(dictionary, reverse=False):
+def sort_dict_by_values(dictionary: dict, reverse: bool = False) -> dict:
     """Sort a dictionary by its values (default ascending)"""
     holder_list = sorted(((v, k) for (k, v) in dictionary.items()), reverse=reverse)
     return dict([(k, v) for (v, k) in holder_list])
@@ -400,17 +457,57 @@ def sort_dict_by_values(dictionary, reverse=False):
 
 if __name__ == "__main__":
     parser = OptionParser()
-    parser.add_option("-f", "--file", dest="outfile_name", default="snapshot.csv",
-                      help="write report to FILE", metavar="FILE")
-    parser.add_option("--cmid", dest="candymachine_id",
-                      help="Use Candy Machine ID to fetch tokens")
-    parser.add_option("--cmv2", dest="cm_v2", action="store_true", default=False,
-                      help="Use Candy Machine v2 method to fetch tokens from CM ID")
+    parser.add_option(
+        "-t",
+        dest="token_list",
+        action="store_true",
+        default=False,
+        help="Get the token list for the give CM ID (requires passing --cmid)",
+    )
+    parser.add_option(
+        "-o",
+        dest="holder_counts",
+        action="store_true",
+        default=False,
+        help="Get and print the overall holder counts",
+    )
+    parser.add_option(
+        "-a",
+        dest="attributes",
+        action="store_true",
+        default=False,
+        help="Get and print the overall metadata attribute distribution",
+    )
+    parser.add_option(
+        "-s",
+        dest="snapshot",
+        action="store_true",
+        default=False,
+        help="Get and output the snapshot file to the outfile name from -f (defaults to snapshot.csv)",
+    )
+    parser.add_option(
+        "-f",
+        "--file",
+        dest="outfile_name",
+        default="snapshot.csv",
+        help="write report to FILE",
+        metavar="FILE",
+    )
+    parser.add_option(
+        "--cmid",
+        dest="candymachine_id",
+        help="Use CANDYMACHINE_ID to fetch tokens",
+        metavar="CANDYMACHINE_ID",
+    )
+    parser.add_option(
+        "--cmv2",
+        dest="cm_v2",
+        action="store_true",
+        default=False,
+        help="Use Candy Machine v2 method to fetch tokens from CM ID",
+    )
 
     (options, args) = parser.parse_args()
-    # 4wTTi885HkQ6awqRGQkHAdXXzE46DyqLNXtfo1uz5ub3 = Mindfolk
-    # CApZmLZAwjTm59pc6rKJ85sux4wCJsLS7RMV1pUkMeVK = My Trash
-    # C3UphYJYqTab4Yrr64V8wSAxeM7Wr9NUauyYGn7aomTJ = MK
 
     if not args:
         print("ERROR: Please pass in a token file name")
@@ -418,8 +515,12 @@ if __name__ == "__main__":
 
     tokenfile_name = args[0]
     main(
+        options.token_list,
+        options.holder_counts,
+        options.attributes,
+        options.snapshot,
         options.candymachine_id,
         options.cm_v2,
         options.outfile_name,
-        tokenfile_name
+        tokenfile_name,
     )
