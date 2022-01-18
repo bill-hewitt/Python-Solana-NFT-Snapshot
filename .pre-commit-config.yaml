@@ -1,0 +1,29 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v4.0.1
+  hooks:
+  - id: check-merge-conflict
+  - id: check-yaml
+  - id: detect-aws-credentials
+  - id: detect-private-key
+  - id: end-of-file-fixer
+    exclude: ^\.idea/
+  - id: requirements-txt-fixer
+  - id: trailing-whitespace
+    exclude: ^\.idea/|.*\.md$
+- repo: https://github.com/asottile/reorder_python_imports
+  rev: v2.5.0
+  hooks:
+  - id: reorder-python-imports
+- repo: https://github.com/ambv/black
+  rev: 21.5b2
+  hooks:
+  - id: black
+    language_version: python3.9
+    args: [-l100]
+    exclude: ^venv/
+- repo: https://gitlab.com/pycqa/flake8
+  rev: 3.9.2
+  hooks:
+  - id: flake8
+    exclude: ^(tests|venv)/
