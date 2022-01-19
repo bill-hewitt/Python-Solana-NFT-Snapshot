@@ -28,12 +28,12 @@ SOLANA_RPC_ENDPOINT = "https://ssc-dao.genesysgo.net/"
     wait=wait_random_exponential(min=1, max=10),
 )
 def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool) -> list:
-    """
+    """Fetch the list of tokens minted from the given Candy Machine ID
     Adapted from https://github.com/solana-dev-adv/solana-cookbook/tree/master/code/nfts/nfts-mint-addresses
 
-    :param cm_id:
-    :param use_v2:
-    :return:
+    :param cm_id: The Candy Machine ID to fetch tokens for
+    :param use_v2: Whether the Candy Machine uses the v2 codebase or not (changes fetching methodology)
+    :return: A list of the token IDs
     """
     start_time = time.time()
 
@@ -91,6 +91,14 @@ def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool) -> list:
     ]
 
 
+def create_solana_client() -> AsyncClient:
+    """Make an async Solana client configured for our purposes
+
+    :return: AsyncClient
+    """
+    return AsyncClient(SOLANA_RPC_ENDPOINT, timeout=30)
+
+
 @retry(
     stop=stop_after_attempt(3),
     after=after_log(logger, logging.DEBUG),
@@ -99,12 +107,12 @@ def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool) -> list:
 async def get_holder_info_from_solana_async(
     client: AsyncClient, data_dict: dict, limiter: AsyncLimiter
 ) -> dict:
-    """
+    """Fetch info about a token's holder from the Solana network
 
-    :param client:
-    :param data_dict:
-    :param limiter:
-    :return:
+    :param client: The Solana client used to make requests
+    :param data_dict: The data sub-dict for the single desired token
+    :param limiter: An AsyncLimiter used to prevent hitting request limits, and generally be a good citizen.
+    :return: The data dict with the "holders" key populated with response data
     """
     async with limiter:
         largest_account = await client.get_token_largest_accounts(data_dict["token"])
@@ -122,36 +130,28 @@ async def get_holder_info_from_solana_async(
             return data_dict
 
 
-def create_solana_client():
-    """
-
-    :return:
-    """
-    return AsyncClient(SOLANA_RPC_ENDPOINT, timeout=30)
-
-
 @retry(
     stop=stop_after_attempt(3),
     after=after_log(logger, logging.DEBUG),
     wait=wait_random_exponential(min=1, max=10),
 )
 async def get_account_info_from_solana_async(
-    sol_client: AsyncClient, data_dict: dict, limiter: AsyncLimiter
+    client: AsyncClient, data_dict: dict, limiter: AsyncLimiter
 ) -> dict:
-    """
+    """Fetch info about a token's metadata account from the Solana network
 
-    :param sol_client:
-    :param data_dict:
-    :param limiter:
-    :return:
+    :param client: The Solana client used to make requests
+    :param data_dict: The data sub-dict for the single desired token
+    :param limiter: An AsyncLimiter used to prevent hitting request limits, and generally be a good citizen.
+    :return: The data dict with the "account" key populated with response data
     """
     async with limiter:
         metadata_account = metadata.get_metadata_account(data_dict["token"])
-        data = await sol_client.get_account_info(metadata_account)
+        data = await client.get_account_info(metadata_account)
         decoded_data = base64.b64decode(data["result"]["value"]["data"][0])
         unpacked_data = metadata.unpack_metadata_account(decoded_data)
 
-        # This unfortunately leaves us with bytes, which are note JSON-serializable for caching...
+        # This unfortunately leaves us with bytes, which are not JSON-serializable for caching...
         for k, v in unpacked_data.items():
             try:
                 unpacked_data[k] = v.decode()

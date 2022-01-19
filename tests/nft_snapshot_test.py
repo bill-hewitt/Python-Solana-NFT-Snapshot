@@ -13,6 +13,10 @@ def test_populate_account_details_async():
     pytest.skip("Not Implemented")
 
 
+def test_fetch_token_data_from_network_async():
+    pytest.skip("Not Implemented")
+
+
 def test_get_arweave_metadata():
     pytest.skip("Not Implemented")
 

@@ -16,7 +16,6 @@ from typing import Callable
 import aiohttp
 import tqdm
 from aiolimiter import AsyncLimiter
-from solana.rpc.async_api import AsyncClient
 
 from util import cache
 from util import http_helpers as hh
@@ -47,17 +46,19 @@ def main(
     token_file_name: str,
     bust_cache: bool,
 ) -> None:
-    """
+    """Central piece of the script: run the specified pieces of functionality specified from the options passed in.
+    Will fetch needed data, if required (although fetched data is cached to disk so analysis can be run multiple
+    times from those snapshots).
 
-    :param get_token_list:
-    :param get_holder_counts:
-    :param get_attribute_distribution:
-    :param get_holder_snapshot:
-    :param candymachine_id:
-    :param cmv2:
-    :param outfile_name:
-    :param token_file_name:
-    :param bust_cache:
+    :param get_token_list: Whether to fetch the token list for the given CM ID (requires candymachine_id)
+    :param get_holder_counts: Whether to print the number of NFTs held per wallet
+    :param get_attribute_distribution: Whether to print the rarity of all attributes found in the metadata
+    :param get_holder_snapshot: Whether to output a CSV snapshot of information for each token
+    :param candymachine_id: The Candy Machine ID to fetch tokens for
+    :param cmv2: Whether the specified candymachine_id uses v2 or not
+    :param outfile_name: Name to output the CSV snapshot to
+    :param token_file_name: Name to output the token list to
+    :param bust_cache: Whether to clear out the cache prior to running so you get fresh data
     :return:
     """
     cache_file_key = token_file_name
@@ -116,86 +117,54 @@ def main(
 
 
 def populate_holders_details_async(all_token_data: dict, cache_file_key: str) -> dict:
-    """
+    """Fetch data about which wallets own the NFTs specified by the given token IDs. Fetched data is cached at the end.
 
-    :param all_token_data:
-    :param cache_file_key:
-    :return:
+    :param all_token_data: A dict of all the token data being operated upon
+    :param cache_file_key: Name of the file to write to in the cache
+    :return: The all_token_data dict with the "holders" key populated for each token
     """
     start_time = time.time()
 
     logging.info("\nPopulating holders details...")
-
-    async def inner(token_data):
-        limiter = AsyncLimiter(100, 1)
-        async with AsyncClient(sh.SOLANA_RPC_ENDPOINT, timeout=60) as client:
-            tasks = []
-            for token in token_data.keys():
-                if token_data[token].get("holders") is None:
-                    tasks.append(
-                        asyncio.create_task(
-                            sh.get_holder_info_from_solana_async(client, token_data[token], limiter)
-                        )
-                    )
-            [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
-        cache.save_request_cache(cache_file_key, token_data)
-        return token_data
-
-    result = asyncio.run(inner(all_token_data))
+    result = asyncio.run(
+        fetch_token_data_from_network_async(
+            sh.create_solana_client,
+            all_token_data,
+            "holders",
+            sh.get_holder_info_from_solana_async,
+        )
+    )
     cache.save_request_cache(cache_file_key, all_token_data)
-
     logging.info("--- %s seconds ---", (time.time() - start_time))
     return result
 
 
 def populate_account_details_async(all_token_data: dict, cache_file_key: str) -> dict:
+    """Fetch metadata about the given token IDs, including attributes. Fetched data is cached at the end.
+
+    :param all_token_data: A dict of all the token data being operated upon
+    :param cache_file_key: Name of the file to write to in the cache
+    :return: The all_token_data dict with the "account" and "arweave" keys populated for each token
     """
-
-    :param all_token_data:
-    :param cache_file_key:
-    :return:
-    """
-
-    async def inner(
-        create_client_fn: Callable, token_data: dict, key: str, get_data_fn: Callable
-    ) -> dict:
-        """
-
-        :param create_client_fn:
-        :param token_data:
-        :param key:
-        :param get_data_fn:
-        :return:
-        """
-        limiter = AsyncLimiter(100, 1)
-        async with create_client_fn() as client:
-            tasks = []
-            for token in token_data.keys():
-                if token_data[token].get(key) is None:
-                    tasks.append(
-                        asyncio.create_task(get_data_fn(client, token_data[token], limiter))
-                    )
-            [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
-
-        cache.save_request_cache(cache_file_key, token_data)
-        return token_data
-
     start_time = time.time()
     logging.info("\nPopulating account details...")
     asyncio.run(
-        inner(
+        fetch_token_data_from_network_async(
             sh.create_solana_client,
             all_token_data,
             "account",
             sh.get_account_info_from_solana_async,
         )
     )
+    cache.save_request_cache(cache_file_key, all_token_data)
     logging.info("--- %s seconds ---", (time.time() - start_time))
 
     start_time = time.time()
     logging.info("\nPopulating token metadata details...")
     result = asyncio.run(
-        inner(hh.create_http_client, all_token_data, "arweave", get_arweave_metadata)
+        fetch_token_data_from_network_async(
+            hh.create_http_client, all_token_data, "arweave", get_arweave_metadata
+        )
     )
     cache.save_request_cache(cache_file_key, all_token_data)
     logging.info("--- %s seconds ---", (time.time() - start_time))
@@ -203,15 +172,38 @@ def populate_account_details_async(all_token_data: dict, cache_file_key: str) ->
     return result
 
 
+async def fetch_token_data_from_network_async(
+    create_client_fn: Callable, all_token_data: dict, key: str, get_data_fn: Callable
+) -> dict:
+    """Method to abstract the async client and task management for data fetching. Creates a task for each token
+
+    :param create_client_fn: Function that creates and returns the async network client used to fetch data
+    :param all_token_data: A dict of all the token data being operated upon
+    :param key: The key in token_data to save the fetched data to
+    :param get_data_fn: The function to call in order to fetch the data
+    :return: The all_token_data dict with the requested key populated for each token
+    """
+    limiter = AsyncLimiter(100, 1)
+    async with create_client_fn() as client:
+        tasks = []
+        for token in all_token_data.keys():
+            if all_token_data[token].get(key) is None:
+                tasks.append(
+                    asyncio.create_task(get_data_fn(client, all_token_data[token], limiter))
+                )
+        [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
+    return all_token_data
+
+
 async def get_arweave_metadata(
     http_client: aiohttp.ClientSession, data_dict: dict, limiter: AsyncLimiter
 ) -> dict:
-    """
+    """Fetches token metadata for a particular token (primarily used for traits) from Arweave if a URL is present.
 
-    :param http_client:
-    :param data_dict:
-    :param limiter:
-    :return:
+    :param http_client: The aiohttp client used to make requests
+    :param data_dict: The data sub-dict for the single desired token
+    :param limiter: An AsyncLimiter used to prevent hitting request limits, and generally be a good citizen.
+    :return: The data dict with the "arweave" key populated with response data (if applicable)
     """
     arweave_uri = data_dict["account"]["data"].get("uri")
     if data_dict.get("arweave") is None:
@@ -223,10 +215,9 @@ async def get_arweave_metadata(
 
 
 def holder_counts(all_token_data: dict) -> None:
-    """
+    """Analyze the token data to determine how many NFTs are in each wallet, and print it out.
 
-    :param all_token_data:
-    :return:
+    :param all_token_data: The preassembled data dict for all tokens
     """
     counts = {}
     for token, data_dict in all_token_data.items():
@@ -235,7 +226,7 @@ def holder_counts(all_token_data: dict) -> None:
         if token_holders.get("info") and token_holders["info"].get("owner"):
             holder_address = token_holders["info"]["owner"]
         else:
-            holder_address = "UNKNOWN_ADDRESS"
+            holder_address = ""
 
         if not counts.get(holder_address):
             counts[holder_address] = 0
@@ -245,10 +236,9 @@ def holder_counts(all_token_data: dict) -> None:
 
 
 def attribute_distribution(all_token_data: dict) -> None:
-    """
+    """Analyze the token data to determine the statistical rarity of the possible NFT traits, and print it out.
 
-    :param all_token_data:
-    :return:
+    :param all_token_data: The preassembled data dict for all tokens
     """
     tokens_with_attributes_total = 0
     attribute_counts = {}
@@ -279,7 +269,7 @@ if __name__ == "__main__":
         dest="token_list",
         action="store_true",
         default=False,
-        help="Get the token list for the give CM ID (requires passing --cmid)",
+        help="Get the token list for the given CM ID (requires passing --cmid)",
     )
     parser.add_option(
         "-o",
