@@ -10,7 +10,7 @@ Originally based on https://github.com/GMnky/Python-Solana-NFT-Snapshot but sign
 import asyncio
 import logging
 import time
-from optparse import OptionParser
+from argparse import ArgumentParser
 from typing import Callable
 
 import aiohttp
@@ -263,79 +263,80 @@ def attribute_distribution(all_token_data: dict) -> None:
 
 
 if __name__ == "__main__":
-    parser = OptionParser()
-    parser.add_option(
+    parser = ArgumentParser()
+    parser.add_argument(
+        "token_file",
+        metavar="TOKEN_FILE",
+        type=str,
+        help="file to read token IDs from (and write them to, if applicable)",
+    )
+    parser.add_argument(
         "-t",
         dest="token_list",
         action="store_true",
         default=False,
-        help="Get the token list for the given CM ID (requires passing --cmid)",
+        help="get the token list for the given CM ID (requires passing --cmid)",
     )
-    parser.add_option(
+    parser.add_argument(
         "-o",
         dest="holder_counts",
         action="store_true",
         default=False,
-        help="Get and print the overall holder counts",
+        help="get and print the overall holder counts",
     )
-    parser.add_option(
+    parser.add_argument(
         "-a",
         dest="attributes",
         action="store_true",
         default=False,
-        help="Get and print the overall metadata attribute distribution",
+        help="get and print the overall metadata attribute distribution",
     )
-    parser.add_option(
+    parser.add_argument(
         "-s",
         dest="snapshot",
         action="store_true",
         default=False,
-        help="Get and output the snapshot file to the outfile name from -f",
+        help="get and output the snapshot file to the outfile name from -f",
     )
-    parser.add_option(
+    parser.add_argument(
         "-f",
         "--file",
         dest="outfile_name",
         default="snapshot.csv",
-        help="Write snapshot to FILE (defaults to snapshot.csv)",
-        metavar="FILE",
+        help="write snapshot to FILE (defaults to snapshot.csv)",
+        metavar="SNAP_FILE",
     )
-    parser.add_option(
+    parser.add_argument(
         "--cmid",
         dest="candymachine_id",
-        help="Use CANDYMACHINE_ID to fetch tokens",
+        help="use CANDYMACHINE_ID to fetch tokens",
         metavar="CANDYMACHINE_ID",
     )
-    parser.add_option(
+    parser.add_argument(
         "--cmv2",
         dest="cm_v2",
         action="store_true",
         default=False,
-        help="Use Candy Machine v2 method to fetch tokens from CM ID",
+        help="use Candy Machine v2 method to fetch tokens from CM ID",
     )
-    parser.add_option(
+    parser.add_argument(
         "--bust-cache",
         dest="bust_cache",
         action="store_true",
         default=False,
-        help="Clear out any existing cache data for this token file",
+        help="clear out any existing cache data for this token file",
     )
 
-    (options, args) = parser.parse_args()
+    args = parser.parse_args()
 
-    if not args:
-        print("ERROR: Please pass in a token file name")
-        exit(1)
-
-    tokenfile_name = args[0]
     main(
-        options.token_list,
-        options.holder_counts,
-        options.attributes,
-        options.snapshot,
-        options.candymachine_id,
-        options.cm_v2,
-        options.outfile_name,
-        tokenfile_name,
-        options.bust_cache,
+        args.token_list,
+        args.holder_counts,
+        args.attributes,
+        args.snapshot,
+        args.candymachine_id,
+        args.cm_v2,
+        args.outfile_name,
+        args.token_file,
+        args.bust_cache,
     )

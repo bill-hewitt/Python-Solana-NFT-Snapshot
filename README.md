@@ -6,23 +6,23 @@ holder snapshots as CSV, holder wallet distribution, and trait rarity.
 It runs (relatively) quickly due to asyncio usage, and caches downloaded data for performance reasons.
 
 # Usage
-    % python nft_snapshot.py -h
-    Usage: nft_snapshot.py [options]
-
-    Options:
+    usage: nft_snapshot.py [-h] [-t] [-o] [-a] [-s] [-f SNAP_FILE] [--cmid CANDYMACHINE_ID] [--cmv2] [--bust-cache] TOKEN_FILE
+    
+    positional arguments:
+      TOKEN_FILE            file to read token IDs from (and write them to, if applicable)
+    
+    optional arguments:
       -h, --help            show this help message and exit
-      -t                    Get the token list for the given CM ID (requires
-                            passing --cmid)
-      -o                    Get and print the overall holder counts
-      -a                    Get and print the overall metadata attribute
-                            distribution
-      -s                    Get and output the snapshot file to the outfile name
-                            from -f
-      -f FILE, --file=FILE  Write snapshot to FILE (defaults to snapshot.csv)
-      --cmid=CANDYMACHINE_ID
-                            Use CANDYMACHINE_ID to fetch tokens
-      --cmv2                Use Candy Machine v2 method to fetch tokens from CM ID
-      --bust-cache          Clear out any existing cache data for this token file
+      -t                    get the token list for the given CM ID (requires passing --cmid)
+      -o                    get and print the overall holder counts
+      -a                    get and print the overall metadata attribute distribution
+      -s                    get and output the snapshot file to the outfile name from -f
+      -f SNAP_FILE, --file SNAP_FILE
+                            write snapshot to FILE (defaults to snapshot.csv)
+      --cmid CANDYMACHINE_ID
+                            use CANDYMACHINE_ID to fetch tokens
+      --cmv2                use Candy Machine v2 method to fetch tokens from CM ID
+      --bust-cache          clear out any existing cache data for this token file
 
 # Examples
     % python nft_snapshot.py -toas --cmid=4wTTi885HkQ6awqRGQkHAdXXzE46DyqLNXtfo1uz5ub3 tokenlist_mf.txt
