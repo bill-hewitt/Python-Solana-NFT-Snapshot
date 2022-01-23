@@ -2,7 +2,6 @@ import base64
 
 import aiolimiter
 import base58
-import mock
 import pytest
 from solana.rpc.async_api import AsyncClient
 
