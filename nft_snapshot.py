@@ -25,7 +25,7 @@ from util import solana_helpers as sh
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
-    # filename="app.log",  # Uncomment this to have debug logs go to an output file
+    filename="app.log",
 )
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
