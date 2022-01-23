@@ -43,11 +43,15 @@ async def async_http_request(session: aiohttp.ClientSession, url: str) -> dict:
     async with session.get(url) as resp:
         if resp.status != 200:
             if resp.status == 429:
-                # If we failed for some reason, try again
                 logger.debug(
                     "Got status code %s for url %s, sleeping and retrying", resp.status, url
                 )
                 raise RateLimitingError()
+            elif resp.status == 404:
+                logger.debug(
+                    "Got status code %s for url %s, has metadata been uploaded?", resp.status, url
+                )
+                return {}
             else:
                 logger.error(
                     "HTTP request for %s failed with status %s: %s", url, resp.status, resp.json()

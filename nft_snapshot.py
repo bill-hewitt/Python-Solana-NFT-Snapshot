@@ -25,7 +25,7 @@ from util import solana_helpers as sh
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s %(name)-12s %(levelname)-8s %(message)s",
-    filename="app.log",
+    # filename="app.log",  # Uncomment this to have debug logs go to an output file
 )
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO)
@@ -86,7 +86,7 @@ def main(
     # If required, bust cache. otherwise, load it
     if bust_cache:
         all_token_data = {}
-        cache.save_request_cache(cache_file_key, all_token_data)
+        cache.save_request_cache(cache_file_key, {})
     else:
         all_token_data = cache.load_request_cache(cache_file_key)
 
@@ -98,13 +98,13 @@ def main(
         if not holders_populated:
             populate_holders_details_async(all_token_data, cache_file_key)
             holders_populated = True
-        holder_counts(all_token_data)
+        print(holder_counts(all_token_data))
 
     if get_attribute_distribution:
         if not accounts_populated:
             populate_account_details_async(all_token_data, cache_file_key)
             accounts_populated = True
-        attribute_distribution(all_token_data)
+        print(attribute_distribution(all_token_data))
 
     if get_holder_snapshot:
         if not holders_populated:
@@ -134,7 +134,7 @@ def populate_holders_details_async(all_token_data: dict, cache_file_key: str) ->
             sh.get_holder_info_from_solana_async,
         )
     )
-    cache.save_request_cache(cache_file_key, all_token_data)
+    cache.save_request_cache(cache_file_key, result)
     logging.info("--- %s seconds ---", (time.time() - start_time))
     return result
 
@@ -148,7 +148,7 @@ def populate_account_details_async(all_token_data: dict, cache_file_key: str) ->
     """
     start_time = time.time()
     logging.info("\nPopulating account details...")
-    asyncio.run(
+    result = asyncio.run(
         fetch_token_data_from_network_async(
             sh.create_solana_client,
             all_token_data,
@@ -156,7 +156,7 @@ def populate_account_details_async(all_token_data: dict, cache_file_key: str) ->
             sh.get_account_info_from_solana_async,
         )
     )
-    cache.save_request_cache(cache_file_key, all_token_data)
+    cache.save_request_cache(cache_file_key, result)
     logging.info("--- %s seconds ---", (time.time() - start_time))
 
     start_time = time.time()
@@ -166,7 +166,7 @@ def populate_account_details_async(all_token_data: dict, cache_file_key: str) ->
             hh.create_http_client, all_token_data, "arweave", get_arweave_metadata
         )
     )
-    cache.save_request_cache(cache_file_key, all_token_data)
+    cache.save_request_cache(cache_file_key, result)
     logging.info("--- %s seconds ---", (time.time() - start_time))
 
     return result
@@ -214,10 +214,11 @@ async def get_arweave_metadata(
     return data_dict
 
 
-def holder_counts(all_token_data: dict) -> None:
+def holder_counts(all_token_data: dict) -> str:
     """Analyze the token data to determine how many NFTs are in each wallet, and print it out.
 
     :param all_token_data: The preassembled data dict for all tokens
+    :return: A string containing the formatted output
     """
     counts = {}
     for token, data_dict in all_token_data.items():
@@ -232,13 +233,14 @@ def holder_counts(all_token_data: dict) -> None:
             counts[holder_address] = 0
         counts[holder_address] += 1
 
-    output.print_biggest_holders(len(all_token_data), counts)
+    return output.format_biggest_holders(len(all_token_data), counts)
 
 
-def attribute_distribution(all_token_data: dict) -> None:
+def attribute_distribution(all_token_data: dict) -> str:
     """Analyze the token data to determine the statistical rarity of the possible NFT traits, and print it out.
 
     :param all_token_data: The preassembled data dict for all tokens
+    :return: A string containing the formatted output
     """
     tokens_with_attributes_total = 0
     attribute_counts = {}
@@ -259,7 +261,7 @@ def attribute_distribution(all_token_data: dict) -> None:
         else:
             logging.info("Token %s has no attributes", token)
 
-    output.print_trait_frequency(tokens_with_attributes_total, attribute_counts)
+    return output.format_trait_frequency(tokens_with_attributes_total, attribute_counts)
 
 
 if __name__ == "__main__":

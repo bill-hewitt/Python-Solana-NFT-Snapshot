@@ -5,8 +5,8 @@ import time
 import base58
 from aiolimiter import AsyncLimiter
 from solana.publickey import PublicKey
-from solana.rpc.api import Client
-from solana.rpc.async_api import AsyncClient
+from solana.rpc import api
+from solana.rpc import async_api
 from solana.rpc.types import DataSliceOpts
 from solana.rpc.types import MemcmpOpts
 from tenacity import after_log
@@ -14,7 +14,7 @@ from tenacity import retry
 from tenacity import stop_after_attempt
 from tenacity import wait_random_exponential
 
-from . import metadata
+from util import metadata
 
 
 logger = logging.getLogger("nft_snapshot.solana_helpers")
@@ -27,7 +27,7 @@ SOLANA_RPC_ENDPOINT = "https://ssc-dao.genesysgo.net/"
     after=after_log(logger, logging.DEBUG),
     wait=wait_random_exponential(min=1, max=10),
 )
-def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool) -> list:
+def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool = False) -> list:
     """Fetch the list of tokens minted from the given Candy Machine ID
     Adapted from https://github.com/solana-dev-adv/solana-cookbook/tree/master/code/nfts/nfts-mint-addresses
 
@@ -39,7 +39,7 @@ def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool) -> list:
 
     logger.info(f"Fetching tokens from CM {cm_id} (v2? {use_v2})")
 
-    client = Client(SOLANA_RPC_ENDPOINT, timeout=120)
+    client = api.Client(SOLANA_RPC_ENDPOINT, timeout=120)
 
     # Bunch of constants to get us looking in the right place...
     MAX_NAME_LENGTH = 32
@@ -91,12 +91,12 @@ def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool) -> list:
     ]
 
 
-def create_solana_client() -> AsyncClient:
+def create_solana_client() -> async_api.AsyncClient:
     """Make an async Solana client configured for our purposes
 
     :return: AsyncClient
     """
-    return AsyncClient(SOLANA_RPC_ENDPOINT, timeout=30)
+    return async_api.AsyncClient(SOLANA_RPC_ENDPOINT, timeout=30)
 
 
 @retry(
@@ -105,7 +105,7 @@ def create_solana_client() -> AsyncClient:
     wait=wait_random_exponential(min=1, max=10),
 )
 async def get_holder_info_from_solana_async(
-    client: AsyncClient, data_dict: dict, limiter: AsyncLimiter
+    client: async_api.AsyncClient, data_dict: dict, limiter: AsyncLimiter
 ) -> dict:
     """Fetch info about a token's holder from the Solana network
 
@@ -136,7 +136,7 @@ async def get_holder_info_from_solana_async(
     wait=wait_random_exponential(min=1, max=10),
 )
 async def get_account_info_from_solana_async(
-    client: AsyncClient, data_dict: dict, limiter: AsyncLimiter
+    client: async_api.AsyncClient, data_dict: dict, limiter: AsyncLimiter
 ) -> dict:
     """Fetch info about a token's metadata account from the Solana network
 

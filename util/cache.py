@@ -8,6 +8,9 @@ logger = logging.getLogger("nft_snapshot.cache")
 CACHE_DIR = "cache"
 
 
+# TODO: Make this a class and store the path as a var
+
+
 def load_request_cache(cache_file_key: str) -> dict:
     """Load the previously-fetched data from the cache and return it.
 
