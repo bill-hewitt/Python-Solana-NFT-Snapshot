@@ -8,7 +8,6 @@ from aiolimiter import AsyncLimiter
 from solana.publickey import PublicKey
 from solana.rpc import api
 from solana.rpc import async_api
-from solana.rpc.types import DataSliceOpts
 from solana.rpc.types import MemcmpOpts
 from tenacity import after_log
 from tenacity import retry
@@ -18,6 +17,8 @@ from tqdm import tqdm
 
 from util import metadata
 from util.token import Token
+
+# from solana.rpc.types import DataSliceOpts
 
 
 logger = logging.getLogger("nft_snapshot.solana_helpers")
@@ -82,18 +83,20 @@ def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool = False) -> lis
 
     # Set some options for exactly where to look within the data, and then fetch it
     memcmp_opts = [MemcmpOpts(offset=CREATOR_ARRAY_START, bytes=str(cm_pk))]
-    data_slice_opts = DataSliceOpts(offset=33, length=32)
+    # NOTE: data_slice doesn't seem to do anything anymore, which seems...bad? Anyway, I just
+    #     filter in the output below so we're all good.
+    # data_slice_opts = DataSliceOpts(offset=33, length=32)
     metadata_accounts = client.get_program_accounts(
         TOKEN_METADATA_PROGRAM,
         encoding="base64",
-        data_slice=data_slice_opts,
+        # data_slice=data_slice_opts,
         data_size=MAX_METADATA_LEN,
         memcmp_opts=memcmp_opts,
     )
     logging.info("--- %s seconds ---", (time.time() - start_time))
 
     return [
-        str(base58.b58encode(base64.b64decode(v["account"]["data"][0])), "UTF-8")
+        str(base58.b58encode(base64.b64decode(v["account"]["data"][0])[33:65]), "UTF-8")
         for v in metadata_accounts["result"]
     ]
 

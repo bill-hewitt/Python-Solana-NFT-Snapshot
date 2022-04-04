@@ -13,7 +13,7 @@ class TestSolanaHelpers:
     def test_get_token_list_from_candymachine_id(self, mocker):
         client_mock = mocker.patch("solana.rpc.api.Client")
         client_mock.return_value.get_program_accounts.return_value = {
-            "result": [{"account": {"data": [base64.b64encode(b"123456789")]}}]
+            "result": [{"account": {"data": [base64.b64encode(b"0" * 33 + b"123456789")]}}]
         }
         test_cm_id = "4wTTi885HkQ6awqRGQkHAdXXzE46DyqLNXtfo1uz5ub3"  # Mindfolk
         expected = [base58.b58encode("123456789").decode()]
@@ -26,7 +26,7 @@ class TestSolanaHelpers:
     def test_get_token_list_from_candymachine_id_v2(self, mocker):
         client_mock = mocker.patch("solana.rpc.api.Client")
         client_mock.return_value.get_program_accounts.return_value = {
-            "result": [{"account": {"data": [base64.b64encode(b"123456789")]}}]
+            "result": [{"account": {"data": [base64.b64encode(b"0" * 33 + b"123456789")]}}]
         }
         test_cm_id = "HHGsTSzwPpYMYDGgUqssgAsMZMsYbshgrhMge8Ypgsjx"  # DTP CMv2
         expected = [base58.b58encode("123456789").decode()]
