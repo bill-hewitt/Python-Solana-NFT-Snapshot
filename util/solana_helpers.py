@@ -1,4 +1,5 @@
 import base64
+import itertools
 import logging
 import time
 
@@ -13,13 +14,19 @@ from tenacity import after_log
 from tenacity import retry
 from tenacity import stop_after_attempt
 from tenacity import wait_random_exponential
+from tqdm import tqdm
 
 from util import metadata
+from util.token import Token
 
 
 logger = logging.getLogger("nft_snapshot.solana_helpers")
 
 SOLANA_RPC_ENDPOINT = "https://ssc-dao.genesysgo.net/"
+
+# Separate RPC endpoint for getProgramAccount, since other providers have it turned off
+# Also much faster for requests it supports, so generally use this one
+GPA_RPC_ENDPOINT = "https://rpc.theindex.io"
 
 
 @retry(
@@ -39,7 +46,7 @@ def get_token_list_from_candymachine_id(cm_id: str, use_v2: bool = False) -> lis
 
     logger.info(f"Fetching tokens from CM {cm_id} (v2? {use_v2})")
 
-    client = api.Client(SOLANA_RPC_ENDPOINT, timeout=120)
+    client = api.Client(GPA_RPC_ENDPOINT, timeout=30)
 
     # Bunch of constants to get us looking in the right place...
     MAX_NAME_LENGTH = 32
@@ -96,7 +103,7 @@ def create_solana_client() -> async_api.AsyncClient:
 
     :return: AsyncClient
     """
-    return async_api.AsyncClient(SOLANA_RPC_ENDPOINT, timeout=30)
+    return async_api.AsyncClient(GPA_RPC_ENDPOINT, timeout=30)
 
 
 @retry(
@@ -104,30 +111,71 @@ def create_solana_client() -> async_api.AsyncClient:
     after=after_log(logger, logging.DEBUG),
     wait=wait_random_exponential(min=1, max=10),
 )
-async def get_holder_info_from_solana_async(
-    client: async_api.AsyncClient, data_dict: dict, limiter: AsyncLimiter
-) -> dict:
+async def get_token_account_from_solana_async(
+    client: async_api.AsyncClient, token: Token, limiter: AsyncLimiter
+) -> Token:
     """Fetch info about a token's holder from the Solana network
 
     :param client: The Solana client used to make requests
-    :param data_dict: The data sub-dict for the single desired token
+    :param token: The Token object for which data is being requested
     :param limiter: An AsyncLimiter used to prevent hitting request limits, and generally be a good citizen.
     :return: The data dict with the "holders" key populated with response data
     """
     async with limiter:
-        largest_account = await client.get_token_largest_accounts(data_dict["token"])
-        if largest_account["result"]["value"]:
-            account_info = await client.get_account_info(
-                largest_account["result"]["value"][0]["address"], encoding="jsonParsed"
-            )
-            data_dict["holders"] = account_info["result"]["value"]["data"]["parsed"]
-            return data_dict
-        else:
-            logger.warning(
-                "No holder info for {}. Response: {}".format(data_dict["token"], largest_account)
-            )
-            data_dict["holders"] = {}
-            return data_dict
+        largest_account_resp = await client.get_token_largest_accounts(token.token)
+    if not largest_account_resp["result"]["value"]:
+        token_account = ""
+    else:
+        token_account = largest_account_resp["result"]["value"][0]["address"]
+    token.token_account = token_account
+    return token
+
+
+def get_holder_account_info_from_solana(all_tokens: dict) -> dict:
+    """Fetch info about the token account for all tokens in a batched fashion
+
+    :param all_tokens: A dict of all the token data being operated upon
+    :return: The all_tokens dict populated for each token
+    """
+    owner_accounts = {}
+    for token in all_tokens.values():
+        if token.holder_address is not None:
+            continue
+        if token.token_account == "":
+            token.holder_address = ""
+            token.amount = 0
+            continue
+        if not owner_accounts.get(token.token_account):
+            owner_accounts[token.token_account] = []
+        owner_accounts[token.token_account].append(token.token)
+
+    # Chunk into sets of 100
+    client = api.Client(SOLANA_RPC_ENDPOINT, timeout=30)
+    chunks = list(itertools.zip_longest(*[iter(owner_accounts.keys())] * 100))
+    for chunk in tqdm(chunks, total=len(chunks)):
+        chunk = list(chunk)
+        while chunk and chunk[-1] is None:
+            chunk.pop()
+        result = client.get_multiple_accounts(chunk, encoding="jsonParsed")
+        for i, owner_account in enumerate(chunk):
+            tokens = owner_accounts[owner_account]
+            for token in tokens:
+                if not result["result"]["value"][i]:
+                    all_tokens[token].holder_address = ""
+                    all_tokens[token].amount = 0
+                else:
+                    token_holders = result["result"]["value"][i]["data"]["parsed"]
+
+                    # Why is this empty sometimes? Because tokens get nuked, so there is no "holder" to fetch
+                    if token_holders.get("info") and token_holders["info"].get("owner"):
+                        all_tokens[token].holder_address = token_holders["info"]["owner"]
+                        all_tokens[token].amount = (
+                            token_holders["info"].get("tokenAmount").get("amount")
+                        )
+                    else:
+                        all_tokens[token].holder_address = ""
+                        all_tokens[token].amount = 0
+    return all_tokens
 
 
 @retry(
@@ -136,26 +184,23 @@ async def get_holder_info_from_solana_async(
     wait=wait_random_exponential(min=1, max=10),
 )
 async def get_account_info_from_solana_async(
-    client: async_api.AsyncClient, data_dict: dict, limiter: AsyncLimiter
-) -> dict:
+    client: async_api.AsyncClient, token: Token, limiter: AsyncLimiter
+) -> Token:
     """Fetch info about a token's metadata account from the Solana network
 
     :param client: The Solana client used to make requests
-    :param data_dict: The data sub-dict for the single desired token
+    :param token: The Token object for which data is being requested
     :param limiter: An AsyncLimiter used to prevent hitting request limits, and generally be a good citizen.
     :return: The data dict with the "account" key populated with response data
     """
     async with limiter:
-        metadata_account = metadata.get_metadata_account(data_dict["token"])
+        metadata_account = metadata.get_metadata_account(token.token)
         data = await client.get_account_info(metadata_account)
         decoded_data = base64.b64decode(data["result"]["value"]["data"][0])
         unpacked_data = metadata.unpack_metadata_account(decoded_data)
 
-        # This unfortunately leaves us with bytes, which are not JSON-serializable for caching...
-        for k, v in unpacked_data.items():
-            try:
-                unpacked_data[k] = v.decode()
-            except (UnicodeDecodeError, AttributeError):
-                pass
-        data_dict["account"] = unpacked_data
-        return data_dict
+        if unpacked_data.get("data") is not None:
+            token.name = unpacked_data["data"].get("name")
+            token.id = token.name[token.name.find("#") + 1 : :]
+            token.data_uri = unpacked_data["data"].get("uri")
+        return token

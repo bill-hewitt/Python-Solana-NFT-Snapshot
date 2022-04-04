@@ -1,4 +1,5 @@
 from util import output
+from util.token import Token
 
 
 class TestOutput:
@@ -93,13 +94,28 @@ holder_2: 6 (6/7, 0.857143)
 
     def test_holder_snapshot(self, mocker):
         input_dict = {
-            "token_addr_1": {
-                "holders": {"info": {"owner": "owner_1", "tokenAmount": {"amount": 1}}},
-                "account": {"data": {"name": "Token #1"}},
-            }
+            "token_addr_1": Token(
+                token="token_addr_1",
+                holder_address="owner_1",
+                amount=1,
+                name="Token #1",
+                id="1",
+                image="https://www.iana.org/_img/2022/iana-logo-header.svg",
+                traits={"Trait1": "Value1"},
+            )
         }
-        expected = [["1", "Token #1", "token_addr_1", "owner_1", 1]]
-        headers = ["Number", "TokenName", "Token", "HolderAddress", "TotalHeld"]
+        headers = ["Number", "TokenName", "Token", "HolderAddress", "TotalHeld", "Image", "Trait1"]
+        expected = [
+            [
+                "1",
+                "Token #1",
+                "token_addr_1",
+                "owner_1",
+                1,
+                "https://www.iana.org/_img/2022/iana-logo-header.svg",
+                "Value1",
+            ]
+        ]
         test_outfile_name = "outfile.csv"
         pd_mock = mocker.patch("pandas.DataFrame")
         output.holder_snapshot(input_dict, test_outfile_name)

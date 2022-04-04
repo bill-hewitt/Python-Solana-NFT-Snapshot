@@ -1,47 +1,83 @@
-import json
+import asyncio
 import logging
+import pickle
 from pathlib import Path
-
 
 logger = logging.getLogger("nft_snapshot.cache")
 
 CACHE_DIR = "cache"
 
 
-# TODO: Make this a class and store the path as a var
-
-
-def load_request_cache(cache_file_key: str) -> dict:
-    """Load the previously-fetched data from the cache and return it.
-
-    :param cache_file_key: Name of the file to write to in the cache
-    :return: dict filled with token data fetched from the cache
+def write_token_list(token_file_name, token_list):
     """
-    filename = "{}_cache.json".format(cache_file_key)
-    try:
-        path = Path(CACHE_DIR) / filename
-        with path.open() as file:
-            cache_data = json.load(file)
-            logger.debug("Loaded cache data from %s", filename)
-            return cache_data
-    except Exception as e:
-        logger.debug("Unable to load cache file %s: %s", filename, e)
-        return {}
 
-
-def save_request_cache(cache_file_key: str, cache_data: dict) -> None:
-    """Save the passed-in dictionary data to the cache, overwriting current contents.
-
-    :param cache_file_key: Name of the file to write to in the cache
-    :param cache_data: The full set of token data to write to the cache
+    :param token_file_name:
+    :param token_list:
     """
-    filename = "{}_cache.json".format(cache_file_key)
-    try:
-        path = Path(CACHE_DIR)
-        path.mkdir(exist_ok=True)
-        path = path / filename
-        with path.open("w") as file:
-            json.dump(cache_data, file)
-            logger.debug("Wrote cache data to %s", path)
-    except Exception as e:
-        logger.warning("Unable to write cache file %s: %s", filename, e)
+    with open(token_file_name, "w") as token_list_file:
+        token_list_file.write("\n".join(token_list))
+
+
+def read_token_list(token_file_name) -> list[str]:
+    """
+
+    :param token_file_name:
+    :return: List of token strings fetched from the file
+    """
+    with open(token_file_name) as token_list_file:
+        return token_list_file.read().splitlines()
+
+
+class TokenCache:
+    filename: str
+    path: Path
+    _initialized: bool = False
+
+    def initialize(self, cache_file_key):
+        self._initialized = True
+        self.filename = "{}_cache.p".format(cache_file_key)
+
+        # Make sure the cache directory and file exist
+        self.path = Path(CACHE_DIR)
+        self.path.mkdir(exist_ok=True)
+        self.path = self.path / self.filename
+
+    async def periodic_cache_task(self, all_tokens: dict):
+        while True:
+            await asyncio.sleep(20)
+            self.save(all_tokens)
+
+    def load(self) -> dict:
+        """Load the previously-fetched data from the cache and return it.
+
+        :return: dict filled with token data fetched from the cache
+        """
+        if not self._initialized:
+            raise RuntimeError("Trying to use cache before initializing it")
+
+        try:
+            with self.path.open("rb") as file:
+                all_tokens = pickle.load(file)
+                logger.debug("Loaded cache data from %s", self.filename)
+                return all_tokens
+        except Exception as e:
+            logger.debug("Unable to load cache file %s: %s", self.filename, e)
+            return {}
+
+    def save(self, all_tokens: dict) -> None:
+        """Save the passed-in dictionary data to the cache, overwriting current contents.
+
+        :param all_tokens: The full set of token data to write to the cache
+        """
+        if not self._initialized:
+            raise RuntimeError("Trying to use cache before initializing it")
+
+        try:
+            with self.path.open("wb") as file:
+                pickle.dump(all_tokens, file)
+                logger.debug("Wrote cache data to %s", self.path)
+        except Exception as e:
+            logger.warning("Unable to write cache file %s: %s", self.filename, e)
+
+
+token_cache = TokenCache()

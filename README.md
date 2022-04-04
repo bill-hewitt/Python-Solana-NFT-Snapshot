@@ -48,3 +48,5 @@ to `trash_snap.csv`.
 
 # TODO
 - Add statistical rarity analysis of a particular ID as command, and then add to snapshot for all tokens
+- Wallet watcher?
+- Resolve out wallets of NFTs listed on exchanges

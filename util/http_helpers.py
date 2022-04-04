@@ -1,4 +1,5 @@
 import logging
+import resource
 
 import aiohttp
 from tenacity import after_log
@@ -23,7 +24,15 @@ def create_http_client() -> aiohttp.ClientSession:
 
     :return: an aiohttp.ClientSession
     """
-    conn = aiohttp.TCPConnector(limit=50)
+
+    # Bump up the open file limits or you'll get a bunch of DNS-looking errors
+    # From https://github.com/aio-libs/aiohttp/issues/3549#issuecomment-603103175
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (2**14, resource.RLIM_INFINITY))
+    except ValueError:
+        logger.warning("Unable to raise open file limits")
+
+    conn = aiohttp.TCPConnector(limit=100)
     timeout = aiohttp.ClientTimeout(total=60)
     return aiohttp.ClientSession(connector=conn, timeout=timeout)
 

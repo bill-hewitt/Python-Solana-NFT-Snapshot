@@ -63,36 +63,43 @@ def sort_dict_by_values(dictionary: dict, reverse: bool = False) -> dict:
     return dict([(k, v) for (v, k) in flipped_sorted_dict])
 
 
-def holder_snapshot(all_token_data: dict, outfile_name: str) -> None:
+def holder_snapshot(all_tokens: dict, outfile_name: str) -> None:
     """Output a CSV file containing data about each token in the collection.
 
-    :param all_token_data: A dict of all the token data in the collection
+    :param all_tokens: A dict of all the token data in the collection
     :param outfile_name: The name of the file to output the CSV to
     """
     token_csv_data = []
 
-    for token, data_dict in all_token_data.items():
-        token_holders = data_dict["holders"]
-        account_data = data_dict["account"]
+    # Create a dictionary of all of the traits present in the collection => index
+    trait_map = {}
+    traits_seen = 0
+    for token in all_tokens.values():
+        for trait_name in token.traits:
+            if trait_name not in trait_map:
+                trait_map[trait_name] = traits_seen
+                traits_seen += 1
 
-        if token_holders.get("info"):
-            holder_address = token_holders["info"].get("owner")
-            amount = token_holders["info"].get("tokenAmount").get("amount")
-        else:
-            holder_address = "UNKNOWN_ADDRESS"
-            amount = 0
-        token_name = account_data.get("data").get("name")
+    for token in all_tokens.values():
+        # Create a list big enough for all the collection's traits, then fill in the ones this NFT has
+        token_traits = [None] * len(trait_map)
+        for trait_name, trait_value in token.traits.items():
+            token_traits[trait_map[trait_name]] = trait_value
         token_csv_data.append(
             [
-                token_name[token_name.find("#") + 1 : :],
-                token_name,
-                token,
-                holder_address,
-                amount,
+                token.id,
+                token.name,
+                token.token,
+                token.holder_address if token.holder_address else "UNKNOWN_ADDRESS",
+                token.amount,
+                token.image,
             ]
+            + token_traits
         )
 
     dataset = pandas.DataFrame(
-        token_csv_data, columns=["Number", "TokenName", "Token", "HolderAddress", "TotalHeld"]
+        token_csv_data,
+        columns=["Number", "TokenName", "Token", "HolderAddress", "TotalHeld", "Image"]
+        + list(trait_map.keys()),
     )
     dataset.to_csv(outfile_name)

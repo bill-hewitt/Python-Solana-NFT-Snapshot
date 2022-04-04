@@ -17,10 +17,13 @@ import aiohttp
 import tqdm
 from aiolimiter import AsyncLimiter
 
-from util import cache
 from util import http_helpers as hh
 from util import output
 from util import solana_helpers as sh
+from util.cache import read_token_list
+from util.cache import token_cache
+from util.cache import write_token_list
+from util.token import Token
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -61,8 +64,16 @@ def main(
     :param bust_cache: Whether to clear out the cache prior to running so you get fresh data
     :return:
     """
-    cache_file_key = token_file_name
     token_list = []
+    all_tokens = {}
+
+    # If required, bust cache. otherwise, load it
+    token_cache.initialize(token_file_name.split(".")[0])
+    if bust_cache:
+        # all_tokens is empty, so we can just overwrite the cache with it
+        token_cache.save(all_tokens)
+    else:
+        all_tokens = token_cache.load()
 
     if get_token_list:
         if candymachine_id:
@@ -72,194 +83,190 @@ def main(
             exit(1)
 
         # Write the token file (note that this will blow away whatever is there now)
-        with open(token_file_name, "w") as token_list_file:
-            token_list_file.write("\n".join(token_list))
+        write_token_list(token_file_name, token_list)
 
     # If we're looking up based on an existing token list from disk, read it in
     if not token_list:
-        with open(token_file_name) as token_list_file:
-            token_list = token_list_file.read().splitlines()
+        token_list = read_token_list(token_file_name)
+
+    for token in token_list:
+        if token not in all_tokens:
+            all_tokens[token] = Token(token)
 
     holders_populated = False
     accounts_populated = False
 
-    # If required, bust cache. otherwise, load it
-    if bust_cache:
-        all_token_data = {}
-        cache.save_request_cache(cache_file_key, {})
-    else:
-        all_token_data = cache.load_request_cache(cache_file_key)
-
-    for token in token_list:
-        if token not in all_token_data:
-            all_token_data[token] = {"token": token}
-
     if get_holder_counts:
         if not holders_populated:
-            populate_holders_details_async(all_token_data, cache_file_key)
+            populate_holders_details_async(all_tokens)
             holders_populated = True
-        print(holder_counts(all_token_data))
+        print(holder_counts(all_tokens))
 
     if get_attribute_distribution:
         if not accounts_populated:
-            populate_account_details_async(all_token_data, cache_file_key)
+            populate_account_details_async(all_tokens)
             accounts_populated = True
-        print(attribute_distribution(all_token_data))
+        print(attribute_distribution(all_tokens))
 
     if get_holder_snapshot:
         if not holders_populated:
-            populate_holders_details_async(all_token_data, cache_file_key)
+            populate_holders_details_async(all_tokens)
             holders_populated = True
         if not accounts_populated:
-            populate_account_details_async(all_token_data, cache_file_key)
+            populate_account_details_async(all_tokens)
             accounts_populated = True
-        output.holder_snapshot(all_token_data, outfile_name)
+        output.holder_snapshot(all_tokens, outfile_name)
 
 
-def populate_holders_details_async(all_token_data: dict, cache_file_key: str) -> dict:
+def populate_holders_details_async(all_tokens: dict) -> dict:
     """Fetch data about which wallets own the NFTs specified by the given token IDs. Fetched data is cached at the end.
 
-    :param all_token_data: A dict of all the token data being operated upon
-    :param cache_file_key: Name of the file to write to in the cache
-    :return: The all_token_data dict with the "holders" key populated for each token
+    :param all_tokens: A dict of all the token data being operated upon
+    :return: The all_tokens dict populated for each token
     """
     start_time = time.time()
-
-    logging.info("\nPopulating holders details...")
-    result = asyncio.run(
+    logging.info("\nPopulating token account details...")
+    asyncio.run(
         fetch_token_data_from_network_async(
             sh.create_solana_client,
-            all_token_data,
-            "holders",
-            sh.get_holder_info_from_solana_async,
+            all_tokens,
+            "token_account",
+            sh.get_token_account_from_solana_async,
         )
     )
-    cache.save_request_cache(cache_file_key, result)
+    token_cache.save(all_tokens)
+    logging.info("--- %s seconds ---", (time.time() - start_time))
+
+    start_time = time.time()
+    logging.info("\nPopulating holders details...")
+    result = sh.get_holder_account_info_from_solana(all_tokens)
+    token_cache.save(all_tokens)
     logging.info("--- %s seconds ---", (time.time() - start_time))
     return result
 
 
-def populate_account_details_async(all_token_data: dict, cache_file_key: str) -> dict:
+def populate_account_details_async(all_tokens: dict) -> dict:
     """Fetch metadata about the given token IDs, including attributes. Fetched data is cached at the end.
 
-    :param all_token_data: A dict of all the token data being operated upon
-    :param cache_file_key: Name of the file to write to in the cache
-    :return: The all_token_data dict with the "account" and "arweave" keys populated for each token
+    :param all_tokens: A dict of all the token data being operated upon
+    :return: The all_tokens dict populated for each token
     """
     start_time = time.time()
     logging.info("\nPopulating account details...")
-    result = asyncio.run(
+    asyncio.run(
         fetch_token_data_from_network_async(
             sh.create_solana_client,
-            all_token_data,
-            "account",
+            all_tokens,
+            "name",
             sh.get_account_info_from_solana_async,
         )
     )
-    cache.save_request_cache(cache_file_key, result)
+    token_cache.save(all_tokens)
     logging.info("--- %s seconds ---", (time.time() - start_time))
 
     start_time = time.time()
     logging.info("\nPopulating token metadata details...")
     result = asyncio.run(
         fetch_token_data_from_network_async(
-            hh.create_http_client, all_token_data, "arweave", get_arweave_metadata
+            hh.create_http_client, all_tokens, "image", get_arweave_metadata
         )
     )
-    cache.save_request_cache(cache_file_key, result)
+    token_cache.save(all_tokens)
     logging.info("--- %s seconds ---", (time.time() - start_time))
 
     return result
 
 
 async def fetch_token_data_from_network_async(
-    create_client_fn: Callable, all_token_data: dict, key: str, get_data_fn: Callable
+    create_client_fn: Callable, all_tokens: dict, key: str, get_data_fn: Callable
 ) -> dict:
     """Method to abstract the async client and task management for data fetching. Creates a task for each token
 
     :param create_client_fn: Function that creates and returns the async network client used to fetch data
-    :param all_token_data: A dict of all the token data being operated upon
+    :param all_tokens: A dict of all the token data being operated upon
     :param key: The key in token_data to save the fetched data to
     :param get_data_fn: The function to call in order to fetch the data
-    :return: The all_token_data dict with the requested key populated for each token
+    :return: The all_tokens dict populated for each token
     """
     limiter = AsyncLimiter(100, 1)
+    cache_task = asyncio.create_task(token_cache.periodic_cache_task(all_tokens))
     async with create_client_fn() as client:
         tasks = []
-        for token in all_token_data.keys():
-            if all_token_data[token].get(key) is None:
-                tasks.append(
-                    asyncio.create_task(get_data_fn(client, all_token_data[token], limiter))
-                )
+        for token in all_tokens.keys():
+            if getattr(all_tokens[token], key) is None:
+                tasks.append(asyncio.create_task(get_data_fn(client, all_tokens[token], limiter)))
         [await f for f in tqdm.tqdm(asyncio.as_completed(tasks), total=len(tasks))]
-    return all_token_data
+    try:
+        cache_task.cancel()
+    except asyncio.CancelledError:
+        pass
+    return all_tokens
 
 
 async def get_arweave_metadata(
-    http_client: aiohttp.ClientSession, data_dict: dict, limiter: AsyncLimiter
-) -> dict:
+    http_client: aiohttp.ClientSession, token: Token, limiter: AsyncLimiter
+) -> Token:
     """Fetches token metadata for a particular token (primarily used for traits) from Arweave if a URL is present.
 
     :param http_client: The aiohttp client used to make requests
-    :param data_dict: The data sub-dict for the single desired token
+    :param token: The Token instance for the single desired token
     :param limiter: An AsyncLimiter used to prevent hitting request limits, and generally be a good citizen.
     :return: The data dict with the "arweave" key populated with response data (if applicable)
     """
-    arweave_uri = data_dict["account"]["data"].get("uri")
-    if data_dict.get("arweave") is None:
-        data_dict["arweave"] = {}
-    if arweave_uri:
+    if token.data_uri:
         async with limiter:
-            data_dict["arweave"] = await hh.async_http_request(http_client, arweave_uri)
-    return data_dict
+            response = await hh.async_http_request(http_client, token.data_uri)
+            token.image = response.get("image")
+            attributes = response.get("attributes")
+            if attributes:
+                token.traits = {}
+                for attribute in attributes:
+                    trait_type = attribute["trait_type"]
+                    value = attribute["value"] if attribute["value"] is not None else ""
+                    token.traits[trait_type] = value
+    else:
+        token.image = ""
+        token.traits = {}
+
+    return token
 
 
-def holder_counts(all_token_data: dict) -> str:
+def holder_counts(all_tokens: dict) -> str:
     """Analyze the token data to determine how many NFTs are in each wallet, and print it out.
 
-    :param all_token_data: The preassembled data dict for all tokens
+    :param all_tokens: The preassembled data dict for all tokens
     :return: A string containing the formatted output
     """
     counts = {}
-    for token, data_dict in all_token_data.items():
-        token_holders = data_dict["holders"]
-        # Why is this empty sometimes? Because tokens get nuked, so there is no "holder" to fetch
-        if token_holders.get("info") and token_holders["info"].get("owner"):
-            holder_address = token_holders["info"]["owner"]
-        else:
-            holder_address = ""
+    for token in all_tokens.values():
+        if not counts.get(token.holder_address):
+            counts[token.holder_address] = 0
+        counts[token.holder_address] += 1
 
-        if not counts.get(holder_address):
-            counts[holder_address] = 0
-        counts[holder_address] += 1
-
-    return output.format_biggest_holders(len(all_token_data), counts)
+    return output.format_biggest_holders(len(all_tokens), counts)
 
 
-def attribute_distribution(all_token_data: dict) -> str:
+def attribute_distribution(all_tokens: dict) -> str:
     """Analyze the token data to determine the statistical rarity of the possible NFT traits, and print it out.
 
-    :param all_token_data: The preassembled data dict for all tokens
+    :param all_tokens: The preassembled data dict for all tokens
     :return: A string containing the formatted output
     """
     tokens_with_attributes_total = 0
     attribute_counts = {}
 
-    for token, data_dict in all_token_data.items():
-        arweave_data = data_dict["arweave"]
-        attributes = arweave_data.get("attributes")
-        if attributes:
+    for token in all_tokens.values():
+        if token.traits:
             tokens_with_attributes_total += 1
-            for attribute in attributes:
-                trait_type = attribute["trait_type"]
-                value = attribute["value"] if attribute["value"] is not None else ""
+            for trait_type, trait_value in token.traits.items():
+                value = trait_value if trait_value is not None else ""
                 if not attribute_counts.get(trait_type):
                     attribute_counts[trait_type] = {}
                 if not attribute_counts[trait_type].get(value):
                     attribute_counts[trait_type][value] = 0
                 attribute_counts[trait_type][value] += 1
         else:
-            logging.info("Token %s has no attributes", token)
+            logging.info("Token %s has no attributes", token.token)
 
     return output.format_trait_frequency(tokens_with_attributes_total, attribute_counts)
 
