@@ -104,7 +104,17 @@ holder_2: 6 (6/7, 0.857143)
                 traits={"Trait1": "Value1"},
             )
         }
-        headers = ["Number", "TokenName", "Token", "HolderAddress", "TotalHeld", "Image", "Trait1"]
+        headers = [
+            "Number",
+            "TokenName",
+            "Token",
+            "HolderAddress",
+            "TotalHeld",
+            "Image",
+            "Rank",
+            "Rarity",
+            "Trait1",
+        ]
         expected = [
             [
                 "1",
@@ -113,6 +123,8 @@ holder_2: 6 (6/7, 0.857143)
                 "owner_1",
                 1,
                 "https://www.iana.org/_img/2022/iana-logo-header.svg",
+                1,
+                "100.00000000000000000000%",
                 "Value1",
             ]
         ]
@@ -121,3 +133,34 @@ holder_2: 6 (6/7, 0.857143)
         output.holder_snapshot(input_dict, test_outfile_name)
         pd_mock.assert_called_once_with(expected, columns=headers)
         pd_mock.return_value.to_csv.assert_called_once_with(test_outfile_name)
+
+    def test_get_trait_map(self):
+        input_dict = {
+            "token_1": Token(token="token_1", traits={"hair": "white", "eyes": "blue"}),
+            "token_2": Token(token="token_2", traits={"hair": "white", "eyes": ""}),
+            "token_3": Token(token="token_3", traits={"jacket": "yes"}),
+        }
+        expected = {"hair": 0, "eyes": 1, "jacket": 2}
+        result = output.get_trait_map(input_dict)
+        assert result == expected
+
+    def test_format_token_rarity(self):
+        input_dict = {
+            "token_1": Token(token="token_1", traits={"hair": "white", "eyes": "blue"}),
+            "token_2": Token(token="token_2", traits={"hair": "white", "eyes": ""}),
+            "token_3": Token(token="token_3", traits={"jacket": "yes"}),
+        }
+        expected = """
+Token token_2
+----------
+Rank: 3
+Rarity: 0.29629629629629627985
+
+Traits
+-----
+hair: white (2/3, 0.666667)
+eyes:  (2/3, 0.666667)
+jacket:  (2/3, 0.666667)
+"""
+        result = output.format_token_rarity("token_2", input_dict)
+        assert result == expected

@@ -3,7 +3,7 @@ import logging
 import pickle
 from pathlib import Path
 
-logger = logging.getLogger("nft_snapshot.cache")
+logger = logging.getLogger("nft_snapshot.util.cache")
 
 CACHE_DIR = "cache"
 

@@ -21,7 +21,7 @@ from util.token import Token
 # from solana.rpc.types import DataSliceOpts
 
 
-logger = logging.getLogger("nft_snapshot.solana_helpers")
+logger = logging.getLogger("nft_snapshot.util.solana_helpers")
 
 SOLANA_RPC_ENDPOINT = "https://ssc-dao.genesysgo.net/"
 

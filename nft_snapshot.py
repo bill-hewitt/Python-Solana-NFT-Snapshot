@@ -23,6 +23,7 @@ from util import solana_helpers as sh
 from util.cache import read_token_list
 from util.cache import token_cache
 from util.cache import write_token_list
+from util.token import get_attribute_counts
 from util.token import Token
 
 logging.basicConfig(
@@ -43,7 +44,9 @@ def main(
     get_holder_counts: bool,
     get_attribute_distribution: bool,
     get_holder_snapshot: bool,
+    get_rarity: bool,
     candymachine_id: str,
+    token_id: str,
     cmv2: bool,
     outfile_name: str,
     token_file_name: str,
@@ -57,7 +60,9 @@ def main(
     :param get_holder_counts: Whether to print the number of NFTs held per wallet
     :param get_attribute_distribution: Whether to print the rarity of all attributes found in the metadata
     :param get_holder_snapshot: Whether to output a CSV snapshot of information for each token
+    :param get_rarity: Whether to display rarity information for the given token
     :param candymachine_id: The Candy Machine ID to fetch tokens for
+    :param token_id: The token to fetch rarity information for
     :param cmv2: Whether the specified candymachine_id uses v2 or not
     :param outfile_name: Name to output the CSV snapshot to
     :param token_file_name: Name to output the token list to
@@ -116,6 +121,17 @@ def main(
             populate_account_details_async(all_tokens)
             accounts_populated = True
         output.holder_snapshot(all_tokens, outfile_name)
+
+    if get_rarity:
+        if not token_id:
+            raise ValueError("No tokenid supplied")
+        if not holders_populated:
+            populate_holders_details_async(all_tokens)
+            holders_populated = True
+        if not accounts_populated:
+            populate_account_details_async(all_tokens)
+            accounts_populated = True
+        print(output.format_token_rarity(token_id, all_tokens))
 
 
 def populate_holders_details_async(all_tokens: dict) -> dict:
@@ -252,23 +268,9 @@ def attribute_distribution(all_tokens: dict) -> str:
     :param all_tokens: The preassembled data dict for all tokens
     :return: A string containing the formatted output
     """
-    tokens_with_attributes_total = 0
-    attribute_counts = {}
-
-    for token in all_tokens.values():
-        if token.traits:
-            tokens_with_attributes_total += 1
-            for trait_type, trait_value in token.traits.items():
-                value = trait_value if trait_value is not None else ""
-                if not attribute_counts.get(trait_type):
-                    attribute_counts[trait_type] = {}
-                if not attribute_counts[trait_type].get(value):
-                    attribute_counts[trait_type][value] = 0
-                attribute_counts[trait_type][value] += 1
-        else:
-            logging.info("Token %s has no attributes", token.token)
-
-    return output.format_trait_frequency(tokens_with_attributes_total, attribute_counts)
+    trait_map = output.get_trait_map(all_tokens)
+    token_with_attr_count, attribute_counts = get_attribute_counts(trait_map, all_tokens)
+    return output.format_trait_frequency(token_with_attr_count, attribute_counts)
 
 
 if __name__ == "__main__":
@@ -308,6 +310,13 @@ if __name__ == "__main__":
         help="get and output the snapshot file to the outfile name from -f",
     )
     parser.add_argument(
+        "-r",
+        dest="rarity",
+        action="store_true",
+        default=False,
+        help="get and output the rarity of the given token ID (requires passing --tokenid)",
+    )
+    parser.add_argument(
         "-f",
         "--file",
         dest="outfile_name",
@@ -320,6 +329,12 @@ if __name__ == "__main__":
         dest="candymachine_id",
         help="use CANDYMACHINE_ID to fetch tokens",
         metavar="CANDYMACHINE_ID",
+    )
+    parser.add_argument(
+        "--tokenid",
+        dest="token_id",
+        help="the token ID to fetch rarity information for",
+        metavar="TOKEN_ID",
     )
     parser.add_argument(
         "--cmv2",
@@ -343,7 +358,9 @@ if __name__ == "__main__":
         args.holder_counts,
         args.attributes,
         args.snapshot,
+        args.rarity,
         args.candymachine_id,
+        args.token_id,
         args.cm_v2,
         args.outfile_name,
         args.token_file,

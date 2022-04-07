@@ -1,5 +1,10 @@
 import pandas
 
+from util.token import get_attribute_counts
+from util.token import get_attribute_rarities
+from util.token import set_token_rarities_and_ranks
+from util.token import Token
+
 
 # List of marketplaces, from https://github.com/theskeletoncrew/air-support/blob/main/1_record_holders/src/main.ts
 MARKETPLACE_WALLETS = {
@@ -71,14 +76,11 @@ def holder_snapshot(all_tokens: dict, outfile_name: str) -> None:
     """
     token_csv_data = []
 
-    # Create a dictionary of all of the traits present in the collection => index
-    trait_map = {}
-    traits_seen = 0
-    for token in all_tokens.values():
-        for trait_name in token.traits:
-            if trait_name not in trait_map:
-                trait_map[trait_name] = traits_seen
-                traits_seen += 1
+    trait_map = get_trait_map(all_tokens)
+    tokens_with_attributes_total, attribute_counts = get_attribute_counts(trait_map, all_tokens)
+    attribute_rarities = get_attribute_rarities(tokens_with_attributes_total, attribute_counts)
+
+    set_token_rarities_and_ranks(trait_map, attribute_rarities, all_tokens)
 
     for token in all_tokens.values():
         # Create a list big enough for all the collection's traits, then fill in the ones this NFT has
@@ -93,13 +95,71 @@ def holder_snapshot(all_tokens: dict, outfile_name: str) -> None:
                 token.holder_address if token.holder_address else "UNKNOWN_ADDRESS",
                 token.amount,
                 token.image,
+                token.rank,
+                "{:.20f}%".format(token.rarity * 100),
             ]
             + token_traits
         )
 
     dataset = pandas.DataFrame(
         token_csv_data,
-        columns=["Number", "TokenName", "Token", "HolderAddress", "TotalHeld", "Image"]
+        columns=[
+            "Number",
+            "TokenName",
+            "Token",
+            "HolderAddress",
+            "TotalHeld",
+            "Image",
+            "Rank",
+            "Rarity",
+        ]
         + list(trait_map.keys()),
     )
     dataset.to_csv(outfile_name)
+
+
+def get_trait_map(all_tokens: dict) -> dict:
+    """Get a map of all the traits present in the collection mapped to their order of appearance.
+
+    :param all_tokens: A dict of all the token data in the collection
+    :return: dict of all the trait names mapped to ints
+    """
+    trait_map = {}
+    traits_seen = 0
+    for token in all_tokens.values():
+        for trait_name in token.traits:
+            if trait_name not in trait_map:
+                trait_map[trait_name] = traits_seen
+                traits_seen += 1
+    return trait_map
+
+
+def format_token_rarity(token_id: str, all_tokens: dict[str, Token]) -> str:
+    """Format the statistical rarity of a token overall, and for each trait
+
+    :param token_id: The token to analyse statistical rarity for
+    :param all_tokens: A dict of all the token data in the collection
+    :return: Nicely-formatted str containing the requested rarity info
+    """
+    token = all_tokens[token_id]
+
+    trait_map = get_trait_map(all_tokens)
+    tokens_with_attributes_total, attribute_counts = get_attribute_counts(trait_map, all_tokens)
+    attribute_rarities = get_attribute_rarities(tokens_with_attributes_total, attribute_counts)
+
+    if not token.rarity or not token.rank:
+        set_token_rarities_and_ranks(trait_map, attribute_rarities, all_tokens)
+
+    output = f"\nToken {token_id}\n----------\n"
+    output += f"Rank: {token.rank}\nRarity: {token.rarity:.20f}\n\n"
+    output += "Traits\n-----\n"
+    for trait_name in trait_map:
+        value = token.traits[trait_name] if trait_name in token.traits else ""
+        output += "{name}: {value} ({count}/{total}, {pct:.6f})\n".format(
+            name=trait_name,
+            value=value,
+            count=attribute_counts[trait_name][value],
+            total=tokens_with_attributes_total,
+            pct=attribute_rarities[trait_name][value],
+        )
+    return output

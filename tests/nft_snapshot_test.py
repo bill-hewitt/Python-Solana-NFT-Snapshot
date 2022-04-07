@@ -19,7 +19,7 @@ class TestNftSnapshot:
         sh_mock.get_token_list_from_candymachine_id.return_value = ["12345"]
 
         nft_snapshot.main(
-            True, False, False, False, "test_cm", False, "outfile", "tokenfile", False
+            True, False, False, False, False, "test_cm", "", False, "outfile", "tokenfile", False
         )
         sh_mock.get_token_list_from_candymachine_id.assert_called_once_with("test_cm", False)
         wtl_mock.assert_called_once_with("tokenfile", ["12345"])
@@ -35,7 +35,7 @@ class TestNftSnapshot:
         holders_mock = mocker.patch.object(nft_snapshot, "holder_counts")
 
         nft_snapshot.main(
-            False, True, False, False, "test_cm", False, "outfile", "tokenfile", False
+            False, True, False, False, False, "test_cm", "", False, "outfile", "tokenfile", False
         )
         rtl_mock.assert_called_once_with("tokenfile")
         pop_holders_mock.assert_called_once_with(input_dict)
@@ -52,7 +52,7 @@ class TestNftSnapshot:
         attrs_mock = mocker.patch.object(nft_snapshot, "attribute_distribution")
 
         nft_snapshot.main(
-            False, False, True, False, "test_cm", False, "outfile", "tokenfile", False
+            False, False, True, False, False, "test_cm", "", False, "outfile", "tokenfile", False
         )
         rtl_mock.assert_called_once_with("tokenfile")
         pop_accts_mock.assert_called_once_with(input_dict)
@@ -70,12 +70,63 @@ class TestNftSnapshot:
         snap_mock = mocker.patch.object(nft_snapshot.output, "holder_snapshot")
 
         nft_snapshot.main(
-            False, False, False, True, "test_cm", False, "outfile", "tokenfile", False
+            False, False, False, True, False, "test_cm", "", False, "outfile", "tokenfile", False
         )
         rtl_mock.assert_called_once_with("tokenfile")
         pop_holders_mock.assert_called_once_with(input_dict)
         pop_accts_mock.assert_called_once_with(input_dict)
         snap_mock.assert_called_once_with(input_dict, "outfile")
+
+    def test_main_rarity(self, mocker):
+        input_dict = {"1": Token(token="1"), "2": Token(token="2"), "3": Token(token="3")}
+        tc_mock = mocker.patch.object(nft_snapshot.token_cache, "load")
+        tc_mock.return_value = input_dict
+        rtl_mock = mocker.patch.object(nft_snapshot, "read_token_list")
+        rtl_mock.return_value = ["1", "2", "3"]
+
+        pop_holders_mock = mocker.patch.object(nft_snapshot, "populate_holders_details_async")
+        pop_accts_mock = mocker.patch.object(nft_snapshot, "populate_account_details_async")
+        rarity_mock = mocker.patch.object(nft_snapshot.output, "format_token_rarity")
+
+        nft_snapshot.main(
+            False,
+            False,
+            False,
+            False,
+            True,
+            "test_cm",
+            "token_val",
+            False,
+            "outfile",
+            "tokenfile",
+            False,
+        )
+        rtl_mock.assert_called_once_with("tokenfile")
+        pop_holders_mock.assert_called_once_with(input_dict)
+        pop_accts_mock.assert_called_once_with(input_dict)
+        rarity_mock.assert_called_once_with("token_val", input_dict)
+
+    def test_main_rarity_no_token_raises(self, mocker):
+        input_dict = {"1": Token(token="1"), "2": Token(token="2"), "3": Token(token="3")}
+        tc_mock = mocker.patch.object(nft_snapshot.token_cache, "load")
+        tc_mock.return_value = input_dict
+        rtl_mock = mocker.patch.object(nft_snapshot, "read_token_list")
+        rtl_mock.return_value = ["1", "2", "3"]
+
+        with pytest.raises(ValueError):
+            nft_snapshot.main(
+                False,
+                False,
+                False,
+                False,
+                True,
+                "test_cm",
+                "",
+                False,
+                "outfile",
+                "tokenfile",
+                False,
+            )
 
     def test_main_bust_cache(self, mocker):
         cache_mock = mocker.patch.object(nft_snapshot.token_cache, "save")
@@ -83,7 +134,7 @@ class TestNftSnapshot:
         rtl_mock.return_value = []
 
         nft_snapshot.main(
-            False, False, False, False, "test_cm", False, "outfile", "tokenfile", True
+            False, False, False, False, False, "test_cm", "", False, "outfile", "tokenfile", True
         )
         cache_mock.assert_called_once_with({})
 
@@ -197,9 +248,10 @@ class TestNftSnapshot:
     def test_attribute_distribution(self, mocker):
         output_mock = mocker.patch.object(nft_snapshot, "output")
         output_mock.format_trait_frequency.return_value = "result_string"
+        output_mock.get_trait_map.return_value = {"hair": 0, "eyes": 1}
         input_dict = {
             "token_1": Token(token="token_1", traits={"hair": "white", "eyes": "blue"}),
-            "token_2": Token(token="token_2", traits={"hair": "white", "eyes": None}),
+            "token_2": Token(token="token_2", traits={"hair": "white", "eyes": ""}),
             "token_3": Token(token="token_3", traits={}),
         }
 

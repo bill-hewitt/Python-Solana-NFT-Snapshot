@@ -12,10 +12,10 @@ It runs (relatively) quickly due to asyncio usage, and caches downloaded data fo
     pip install -r requirements.txt -r requirements-dev.txt
 
 # Usage
-    usage: nft_snapshot.py [-h] [-t] [-o] [-a] [-s] [-f SNAP_FILE] [--cmid CANDYMACHINE_ID] [--cmv2] [--bust-cache] TOKEN_FILE
+    usage: nft_snapshot.py [-h] [-t] [-o] [-a] [-s] [-r] [-f SNAP_FILE] [--cmid CANDYMACHINE_ID] [--tokenid TOKEN_ID] [--cmv2] [--bust-cache] TOKEN_FILE
     
     positional arguments:
-      TOKEN_FILE            file to read token IDs from (and write them to, if applicable)
+      TOKEN_FILE            file to read token IDs from (or write them to, if using -t)
     
     optional arguments:
       -h, --help            show this help message and exit
@@ -23,10 +23,12 @@ It runs (relatively) quickly due to asyncio usage, and caches downloaded data fo
       -o                    get and print the overall holder counts
       -a                    get and print the overall metadata attribute distribution
       -s                    get and output the snapshot file to the outfile name from -f
+      -r                    get and output the rarity of the given token ID (requires passing --tokenid)
       -f SNAP_FILE, --file SNAP_FILE
                             write snapshot to FILE (defaults to snapshot.csv)
       --cmid CANDYMACHINE_ID
                             use CANDYMACHINE_ID to fetch tokens
+      --tokenid TOKEN_ID    the token ID to fetch rarity information for
       --cmv2                use Candy Machine v2 method to fetch tokens from CM ID
       --bust-cache          clear out any existing cache data for this token file
 
@@ -37,8 +39,11 @@ Fetch token information for the Mindfolk collection into `tokenlist_mf.txt` then
 and output a CSV snapshot of token information to `snapshot.csv` (the default location). Use cached data, if present.
 
     % python nft_snapshot.py -s -f trash_snap.csv --bust-cache tokenlist_trash.txt
-Using an existing token list from tokenlist_trash.txt, output a fresh CSV snapshot (not relying on cached data)
+Using an existing token list from `tokenlist_trash.txt`, output a fresh CSV snapshot (not relying on cached data)
 to `trash_snap.csv`.
+
+    % python nft_snapshot.py -r --tokenid=7z1YPxYiKK3c8ZgC4eEaA3dZDCb88LK34Nk4yGBeZnao tokenlist_mf.txt
+Using an existing token list from `tokenlist_mf.txt`, output statistical rarity & rank information for the token `7z1YPxYiKK3c8ZgC4eEaA3dZDCb88LK34Nk4yGBeZnao`
 
 # Example Candy Machine IDs
 * Aurory (10k tokens): `9vwYtcJsH1MskNaixcjgNBnvBDkTBhyg25umod1rgMQL`
@@ -47,6 +52,5 @@ to `trash_snap.csv`.
 * Mindfolk (778 tokens): `4wTTi885HkQ6awqRGQkHAdXXzE46DyqLNXtfo1uz5ub3`
 
 # TODO
-- Add statistical rarity analysis of a particular ID as command, and then add to snapshot for all tokens
-- Wallet watcher?
 - Resolve out wallets of NFTs listed on exchanges
+- Wallet watcher?

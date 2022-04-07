@@ -8,7 +8,7 @@ from tenacity import stop_after_attempt
 from tenacity import wait_random_exponential
 
 
-logger = logging.getLogger("nft_snapshot.http_helpers")
+logger = logging.getLogger("nft_snapshot.util.http_helpers")
 
 
 class RateLimitingError(RuntimeError):
